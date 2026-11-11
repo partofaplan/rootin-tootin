@@ -1,9 +1,11 @@
 // Headless checks for the game logic and data. Run with: npm test
 import assert from 'node:assert/strict';
 import { buildSprites, buildTiles, FONT } from '../src/sprites.js';
-import { LEVEL_ROWS, ROWS, TILE, SOLID_CHARS, SPAWN_CHARS, parseLevel, surfaceRow, tileAt } from '../src/level.js';
 import {
-  createWorld, updateWorld, makeEnemy, NO_INPUT, PHYS, CLIP, RELOAD_FRAMES, MAX_HP,
+  LEVEL_ROWS, ROWS, TILE, SOLID_CHARS, SPAWN_CHARS, SECRET_CHARS, parseLevel, surfaceRow, tileAt, secretAt, rectSolid,
+} from '../src/level.js';
+import {
+  createWorld, updateWorld, makeEnemy, NO_INPUT, PHYS, CLIP, RELOAD_FRAMES, MAX_HP, TURBO_FRAMES, TURBO_RATE, FART_RADIUS,
 } from '../src/game.js';
 import {
   createInput, normalizeBindings, bindingName, ACTIONS, SLOTS, DEFAULT_BINDINGS, STORAGE_KEY,
@@ -55,12 +57,12 @@ function emptyWorld() {
 // ---- data validation --------------------------------------------------------
 test('sprites and tiles build with the expected sizes', () => {
   const sprites = buildSprites();
-  const sizes = { rudyIdle: [26, 28], gun: [12, 7], scorpionA: [36, 22], banditA: [30, 32], chupaA: [38, 26], cactus: [22, 34], beans: [12, 14], heart: [13, 12] };
+  const sizes = { rudyIdle: [26, 34], gun: [12, 7], scorpionA: [36, 22], banditA: [30, 32], chupaA: [38, 26], cactus: [22, 34], beans: [12, 14], heart: [13, 12] };
   for (const [name, [w, h]] of Object.entries(sizes)) {
     assert.equal(sprites[name].w, w, `${name} width`);
     assert.equal(sprites[name].h, h, `${name} height`);
   }
-  for (const name of ['rudyIdle', 'rudyRunA', 'rudyRunB', 'rudyRunC', 'rudyJump', 'rudyFart', 'rudyHurt', 'scorpionB', 'banditB', 'chupaB', 'chupaLeap', 'beansEmpty', 'heartEmpty']) {
+  for (const name of ['rudyIdle', 'rudyRunA', 'rudyRunB', 'rudyRunC', 'rudyJump', 'rudyFart', 'rudyHurt', 'scorpionB', 'banditB', 'chupaB', 'chupaLeap', 'beansEmpty', 'heartEmpty', 'chili']) {
     assert.ok(sprites[name], `missing sprite ${name}`);
   }
   for (const [name, pix] of Object.entries(sprites)) {
@@ -99,12 +101,13 @@ test('level rows are well formed', () => {
   for (const row of LEVEL_ROWS) {
     assert.equal(row.length, LEVEL_ROWS[0].length);
     for (const ch of row) {
-      assert.ok(ch === '.' || ch in SOLID_CHARS || SPAWN_CHARS.includes(ch), `unknown map char '${ch}'`);
+      assert.ok(ch === '.' || ch in SOLID_CHARS || SPAWN_CHARS.includes(ch) || SECRET_CHARS.includes(ch), `unknown map char '${ch}'`);
       count[ch] = (count[ch] || 0) + 1;
     }
   }
   assert.equal(count.P, 1, 'exactly one player start');
   assert.equal(count.G, 1, 'exactly one goal');
+  assert.equal(count.E, 1, 'exactly one easter egg');
   assert.ok(count.K >= 1, 'has a checkpoint');
   for (const ch of 'sbcB') assert.ok(count[ch] >= 3, `has several '${ch}'`);
   assert.ok(LEVEL_ROWS[0].length >= 200, 'level is long enough');
@@ -251,6 +254,103 @@ test('touching the saloon door wins the level', () => {
   assert.equal(w.state, 'won');
   assert.equal(w.bonus.hearts, MAX_HP * 500);
   assert.equal(w.score, w.bonus.time + w.bonus.hearts);
+});
+
+// ---- easter egg ------------------------------------------------------------------------
+test('the secret cave is sealed, hidden behind a right-hand face, and reachable', () => {
+  const L = parseLevel();
+  const cells = [];
+  for (let r = 0; r < L.h; r++) for (let c = 0; c < L.w; c++) if (secretAt(L, c, r)) cells.push([c, r]);
+  assert.ok(cells.length >= 4, 'has a cave');
+  const cols = cells.map(([c]) => c), rows = cells.map(([, r]) => r);
+  const c0 = Math.min(...cols), c1 = Math.max(...cols), r0 = Math.min(...rows), r1 = Math.max(...rows);
+  assert.ok((r1 - r0 + 1) * TILE >= 20, 'tall enough for Rudy');
+  for (let c = c0; c <= c1; c++) {
+    assert.ok(tileAt(L, c, r0 - 1), 'roof is solid');
+    assert.ok(tileAt(L, c, r1 + 1), 'floor is solid');
+  }
+  for (let r = r0; r <= r1; r++) {
+    assert.ok(tileAt(L, c0 - 1, r), 'back wall is solid');
+    assert.ok(!tileAt(L, c1 + 1, r) && !secretAt(L, c1 + 1, r), 'opens onto open air on the right');
+  }
+  assert.ok(tileAt(L, c1 + 1, r1 + 1), 'ground outside the entrance is level with the cave floor');
+  assert.deepEqual(L.secretMouth, { x: (c1 + 1) * TILE, y: (r1 + 1) * TILE });
+  // Looks like rock (and blocks like rock) until found.
+  assert.ok(rectSolid(L, c1 * TILE + 2, r1 * TILE + 2, 4, 4, true));
+  assert.ok(!rectSolid(L, c1 * TILE + 2, r1 * TILE + 2, 4, 4, false));
+  const egg = L.spawns.find((s) => s.type === 'E');
+  assert.equal(egg.col, c0, 'the egg is at the back of the cave');
+});
+
+// Stands Rudy just outside the cave mouth, facing it.
+function atCaveMouth() {
+  const w = emptyWorld();
+  const p = w.player, m = w.level.secretMouth;
+  p.x = m.x + 6; p.y = m.y - p.h; p.vx = 0; p.vy = 0;
+  w.camX = m.x - 128;
+  run(w, 2);
+  return w;
+}
+
+test('walking into the false wall reveals the cave; the chili starts turbo', () => {
+  const w = atCaveMouth();
+  const p = w.player, m = w.level.secretMouth;
+  // The wall stops enemies and bullets while it is still a secret.
+  const s = place(w, 'scorpion', 40);
+  s.face = -1;
+  for (let i = 0; i < 200; i++) { updateWorld(w); p.inv = 5; }
+  assert.ok(s.x >= m.x - 0.01, 'scorpion cannot walk into the cave');
+  w.enemies = [];
+  p.face = -1;
+  updateWorld(w, input({ shoot: true }));
+  run(w, 10);
+  assert.equal(w.bullets.length, 0, 'bullet stopped by the wall');
+  assert.equal(w.secretFound, false);
+
+  let events = [];
+  for (let i = 0; i < 80 && p.turbo === 0; i++) { updateWorld(w, input({ left: true })); events.push(...w.events); w.events.length = 0; }
+  assert.ok(w.secretFound, 'found by walking in');
+  assert.ok(events.includes('secret') && events.includes('turbo'));
+  assert.ok(p.turbo > TURBO_FRAMES - 10 && p.turbo <= TURBO_FRAMES);
+  assert.ok(!w.pickups.some((k) => k.type === 'chili'), 'chili is eaten');
+  assert.ok(w.score >= 1000);
+});
+
+test('turbo: ten seconds of free rapid-fire farts and invincibility', () => {
+  const w = emptyWorld();
+  const p = w.player;
+  p.turbo = TURBO_FRAMES;
+  p.farts = 1;
+  let toots = 0, kills = 0, ended = 0;
+  for (let i = 0; i < TURBO_FRAMES; i++) {
+    if (i % 40 === 0) { // keep throwing trouble at him
+      place(w, 'scorpion', 20); place(w, 'bandit', -30); place(w, 'chupacabra', 50);
+      w.ebullets.push({ x: p.x + 2, y: p.y + 4, w: 5, h: 5, vx: 0, life: 50 });
+      w.hazards.push({ x: p.x, y: p.y, w: 10, h: 10, cx: p.x, by: p.y + p.h });
+    }
+    if (i === 300) { p.y = w.level.pxH + 100; } // even a pit costs nothing
+    updateWorld(w, input({ fartPressed: i % 50 === 0 }));
+    toots += w.events.filter((e) => e === 'toot').length;
+    kills += w.events.filter((e) => e === 'kill').length;
+    ended += w.events.filter((e) => e === 'turboEnd').length;
+    w.events.length = 0;
+    w.hazards = [];
+    assert.equal(w.state, 'play');
+  }
+  assert.equal(toots, TURBO_FRAMES / TURBO_RATE, 'farts continuously');
+  assert.ok(toots / (TURBO_FRAMES / 60) >= 5, 'at least 5 farts a second');
+  assert.equal(p.hp, MAX_HP, 'took no damage');
+  assert.equal(p.farts, 1, 'turbo farts are free and manual ones are held back');
+  assert.ok(kills >= 30, `cleared the enemies (${kills})`);
+  assert.equal(p.turbo, 0);
+  assert.equal(ended, 1);
+  assert.ok(FART_RADIUS > 50);
+  // ...and then it is over: after the short grace period he can be hurt again.
+  w.enemies = []; w.ebullets = [];
+  run(w, 100);
+  place(w, 'scorpion', 0);
+  updateWorld(w);
+  assert.equal(p.hp, MAX_HP - 1);
 });
 
 // ---- controls: rebinding with keyboard and mouse ------------------------------------

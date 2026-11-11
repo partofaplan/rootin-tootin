@@ -1,8 +1,8 @@
 // All drawing: parallax background, tiles, entities, HUD and menu screens.
 
 import { PAL, RAMP, buildSprites, buildTiles, cloud } from './sprites.js';
-import { TILE, tileAt } from './level.js';
-import { VIEW_W, VIEW_H, MAX_HP, MAX_FARTS, CLIP, RELOAD_FRAMES } from './game.js';
+import { TILE, tileAt, secretAt } from './level.js';
+import { VIEW_W, VIEW_H, MAX_HP, MAX_FARTS, CLIP, RELOAD_FRAMES, TURBO_FRAMES } from './game.js';
 import { ACTIONS, SLOTS, bindingName } from './input.js';
 import { TITLE_MENU, PAUSE_MENU, CTL, CTL_RESET_ROW, CTL_BACK_ROW, INITIALS } from './ui.js';
 import { MAX_SCORES } from './hiscores.js';
@@ -156,7 +156,10 @@ function drawTile(ctx, kind, top, c, r) {
   ctx.drawImage(set[(c * 7 + r * 13) & 1], c * TILE, r * TILE);
 }
 
-function drawTiles(ctx, L, cam) {
+// found: whether the secret cave has been discovered. Until then its cells
+// are drawn (and shaded) exactly like the rock around them.
+function drawTiles(ctx, L, cam, found) {
+  const solid = (c, r) => tileAt(L, c, r, !found);
   for (const pit of L.pits) {
     const x = pit.col0 * TILE, w = (pit.col1 - pit.col0 + 1) * TILE, y = pit.topRow * TILE;
     if (x + w < cam || x > cam + VIEW_W) continue;
@@ -165,13 +168,19 @@ function drawTiles(ctx, L, cam) {
   const c0 = Math.max(0, Math.floor(cam / TILE)), c1 = Math.min(L.w - 1, Math.floor((cam + VIEW_W) / TILE));
   for (let c = c0; c <= c1; c++) {
     for (let r = 0; r < L.h; r++) {
-      const kind = tileAt(L, c, r);
-      if (!kind) continue;
-      drawTile(ctx, kind, !tileAt(L, c, r - 1), c, r);
+      const kind = solid(c, r);
+      if (!kind) {
+        if (secretAt(L, c, r)) { // inside the opened cave: dark, with a glint of ore
+          gradient(ctx, c * TILE, r * TILE, TILE, TILE, [[0, '#2c1622'], [1, '#3e2028']], 4);
+          if ((c * 5 + r * 3) % 4 === 0) { ctx.fillStyle = '#6a3a3c'; ctx.fillRect(c * TILE + 5, r * TILE + 6, 2, 1); }
+        }
+        continue;
+      }
+      drawTile(ctx, kind, !solid(c, r - 1), c, r);
       // exposed sides: sunlit on the left, in shadow on the right
-      if (c > 0 && !tileAt(L, c - 1, r)) { ctx.fillStyle = 'rgba(255,240,200,0.3)'; ctx.fillRect(c * TILE, r * TILE, 1, TILE); }
-      if (c < L.w - 1 && !tileAt(L, c + 1, r)) { ctx.fillStyle = 'rgba(40,10,20,0.3)'; ctx.fillRect(c * TILE + TILE - 2, r * TILE, 2, TILE); }
-      if (r < L.h - 1 && !tileAt(L, c, r + 1)) { ctx.fillStyle = 'rgba(40,10,20,0.35)'; ctx.fillRect(c * TILE, r * TILE + TILE - 2, TILE, 2); }
+      if (c > 0 && !solid(c - 1, r)) { ctx.fillStyle = 'rgba(255,240,200,0.3)'; ctx.fillRect(c * TILE, r * TILE, 1, TILE); }
+      if (c < L.w - 1 && !solid(c + 1, r)) { ctx.fillStyle = 'rgba(40,10,20,0.3)'; ctx.fillRect(c * TILE + TILE - 2, r * TILE, 2, TILE); }
+      if (r < L.h - 1 && !solid(c, r + 1)) { ctx.fillStyle = 'rgba(40,10,20,0.35)'; ctx.fillRect(c * TILE, r * TILE + TILE - 2, TILE, 2); }
     }
   }
 }
@@ -290,13 +299,20 @@ function drawPlayer(ctx, w) {
   const flip = p.face < 0;
   const artW = spr.w - spr.pad * 2, artH = spr.h - spr.pad * 2;
   const sx = Math.round(p.x + p.w / 2 - artW / 2), sy = Math.round(p.y + p.h - artH);
-  drawSprite(ctx, spr, sx, sy, flip);
+  const turbo = w.state === 'play' && p.turbo > 0;
+  const fading = turbo && p.turbo < 120 && (w.frame >> 2) & 1; // flickers as it runs out
+  if (turbo && !fading) { // turbo aura
+    ctx.globalAlpha = 0.3;
+    fillCircle(ctx, p.x + p.w / 2, p.y + p.h / 2 - 2, 17 + Math.round(Math.sin(w.frame / 3) * 2), (w.frame >> 2) & 1 ? PAL.y : PAL.f);
+    ctx.globalAlpha = 1;
+  }
+  drawSprite(ctx, spr, sx, sy, flip, turbo && !fading && w.frame % 6 < 2);
   if (!spr.meta.gun) return;
 
   const gunW = S.gun.w - 2;
   const recoil = p.shootAnim > 2 ? 2 : 0;
   const gx = flip ? sx + artW - 21 - gunW + recoil : sx + 21 - recoil;
-  const gy = sy + 16 + spr.meta.bob;
+  const gy = sy + spr.meta.gunY;
   drawSprite(ctx, S.gun, gx, gy, flip);
   if (p.shootAnim > 3) { // muzzle flash
     const mx = flip ? gx - 4 : gx + gunW + 3, my = gy + 2;
@@ -309,14 +325,14 @@ function drawPlayer(ctx, w) {
 function drawBlast(ctx, b) {
   const k = b.t / b.dur;
   const r = b.r * (1 - (1 - k) ** 2);
-  const thick = 3 + 10 * (1 - k);
-  ctx.globalAlpha = 0.5 * (1 - k);
+  const thick = (b.mini ? 2 : 3) + (b.mini ? 5 : 10) * (1 - k);
+  ctx.globalAlpha = (b.mini ? 0.22 : 0.5) * (1 - k);
   fillCircle(ctx, b.x, b.y, r, PAL.f);
-  ctx.globalAlpha = 1 - k * 0.7;
+  ctx.globalAlpha = (b.mini ? 0.7 : 1) * (1 - k * 0.7);
   fillRing(ctx, b.x, b.y, r, r - thick, PAL.F);
   fillRing(ctx, b.x, b.y, r - 1, r - thick + 2, PAL.f);
-  fillRing(ctx, b.x, b.y, r - 2, r - thick + 4, '#f0ffc0');
-  if (k < 0.25) { ctx.globalAlpha = 0.85; fillCircle(ctx, b.x, b.y, r * 0.7, '#ffffff'); }
+  if (!b.mini) fillRing(ctx, b.x, b.y, r - 2, r - thick + 4, '#f0ffc0');
+  if (!b.mini && k < 0.25) { ctx.globalAlpha = 0.85; fillCircle(ctx, b.x, b.y, r * 0.7, '#ffffff'); }
   ctx.globalAlpha = 1;
 }
 
@@ -347,7 +363,7 @@ export function drawWorld(ctx, w) {
   ctx.translate(-cam, 0);
   const visible = (x, margin = 48) => x > cam - margin && x < cam + VIEW_W + margin;
 
-  drawTiles(ctx, L, cam);
+  drawTiles(ctx, L, cam, w.secretFound);
   if (w.goal && visible(w.goal.cx, 80)) drawSaloon(ctx, w.goal, w.frame);
   for (const cp of w.checkpoints) if (visible(cp.x)) drawCheckpoint(ctx, cp, w.frame);
   for (const hz of w.hazards) {
@@ -356,9 +372,14 @@ export function drawWorld(ctx, w) {
     drawSprite(ctx, S.cactus, hz.cx - 11, hz.by - 34);
   }
   for (const k of w.pickups) {
-    if (!visible(k.x)) continue;
+    if (!visible(k.x) || (k.type === 'chili' && !w.secretFound)) continue;
     const bob = Math.round(Math.sin((w.frame + k.phase) / 9) * 2);
-    drawSprite(ctx, k.type === 'beans' ? S.beans : S.heart, k.x, k.y + bob);
+    if (k.type === 'chili') { // the easter egg glows
+      ctx.globalAlpha = 0.25 + 0.15 * Math.sin(w.frame / 6);
+      fillCircle(ctx, k.x + 6, k.y + 7 + bob, 12, PAL.y);
+      ctx.globalAlpha = 1;
+    }
+    drawSprite(ctx, { beans: S.beans, chili: S.chili, heart: S.heart }[k.type], k.x, k.y + bob);
     if (((w.frame + k.phase) >> 3) % 6 === 0) { ctx.fillStyle = PAL.w; ctx.fillRect(k.x + 9, k.y + bob - 1, 1, 3); ctx.fillRect(k.x + 8, k.y + bob, 3, 1); }
   }
   for (const e of w.enemies) if (visible(e.x)) drawEnemy(ctx, e);
@@ -387,7 +408,7 @@ export function drawWorld(ctx, w) {
   }
   ctx.restore();
 
-  const blast = w.blasts[0]; // brief green flash over the whole screen
+  const blast = w.blasts.find((b) => !b.mini); // brief green flash over the whole screen
   if (blast && blast.t < 6) { ctx.fillStyle = `rgba(205,240,106,${0.3 - blast.t * 0.05})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
 }
 
@@ -413,6 +434,14 @@ export function drawHUD(ctx, w, muted) {
   if (p.reload > 0 && (w.frame >> 2) & 1) drawText(ctx, 'RELOAD', 52, 24, { color: PAL.r });
 
   for (let i = 0; i < MAX_FARTS; i++) drawSprite(ctx, i < p.farts ? S.beans : S.beansEmpty, 6 + i * 15, 38);
+
+  if (p.turbo > 0) { // easter egg timer
+    const flash = (w.frame >> 2) & 1;
+    drawText(ctx, 'TURBO TOOT!', VIEW_W / 2, 6, { align: 'center', color: flash ? PAL.y : PAL.f });
+    ctx.fillStyle = PAL.k; ctx.fillRect(VIEW_W / 2 - 42, 16, 84, 7);
+    ctx.fillStyle = PAL.d; ctx.fillRect(VIEW_W / 2 - 41, 17, 82, 5);
+    gradient(ctx, VIEW_W / 2 - 41, 17, Math.ceil((82 * p.turbo) / TURBO_FRAMES), 5, [[0, '#f0ffc0'], [1, PAL.F]], 1);
+  }
 
   drawText(ctx, 'SCORE', VIEW_W - 6, 6, { align: 'right', color: PAL.y });
   drawText(ctx, pad6(w.score), VIEW_W - 6, 16, { align: 'right' });
@@ -580,7 +609,7 @@ export function drawTitle(ctx, tick, best, muted, sel, bindings) {
   const ground = 13 * TILE;
 
   const hi = best ? `HI ${pad6(best.score)} ${best.name}` : `HI ${pad6(0)}`;
-  drawText(ctx, hi, VIEW_W / 2, 5, { align: 'center', color: PAL.y });
+  drawText(ctx, hi, 5, 5, { color: PAL.y });
   const bounce = Math.round(Math.sin(tick / 20) * 2);
   drawLogo(ctx, "ROOTIN'", VIEW_W / 2, 18 + bounce, 4, LOGO_GOLD);
   drawLogo(ctx, "TOOTIN'", VIEW_W / 2, 50 - bounce, 4, LOGO_GAS);
@@ -590,8 +619,8 @@ export function drawTitle(ctx, tick, best, muted, sel, bindings) {
   // Current controls, read from the live bindings (first slot of each action).
   const key = (id) => bindingName(bindings[id].find(Boolean));
   const hint = { align: 'center', color: PAL.w };
-  drawText(ctx, `MOVE ${key('left')} / ${key('right')}   JUMP ${key('jump')}`, VIEW_W / 2, 132, hint);
-  drawText(ctx, `SHOOT ${key('shoot')}   FART ${key('fart')}`, VIEW_W / 2, 142, hint);
+  drawText(ctx, `MOVE ${key('left')} / ${key('right')}   JUMP ${key('jump')}`, VIEW_W / 2, 215, hint);
+  drawText(ctx, `SHOOT ${key('shoot')}   FART ${key('fart')}`, VIEW_W / 2, 226, hint);
 
   // Rudy, a toot, and some company.
   const toot = tick % 170;
@@ -607,14 +636,14 @@ export function drawTitle(ctx, tick, best, muted, sel, bindings) {
   }
   drawShadow(ctx, rx + rudySpr.w, ground, 40);
   drawSpriteScaled(ctx, rudySpr, rx, ry, 2);
-  if (rudySpr.meta.gun) drawSpriteScaled(ctx, S.gun, rx + 42, ry + 32, 2);
+  if (rudySpr.meta.gun) drawSpriteScaled(ctx, S.gun, rx + 42, ry + rudySpr.meta.gunY * 2, 2);
   drawSpriteScaled(ctx, S.cactus, 12, ground - (S.cactus.h - 1) * 2, 2);
   const scuttle = (tick >> 3) & 1 ? S.scorpionA : S.scorpionB;
   const sx = 168 + Math.round(Math.sin(tick / 40) * 6);
   drawShadow(ctx, sx + scuttle.w, ground, 60);
   drawSpriteScaled(ctx, scuttle, sx, ground - (scuttle.h - 1) * 2, 2, true);
 
-  drawText(ctx, `${key('mute')}: SOUND ${muted ? 'OFF' : 'ON'}`, VIEW_W - 5, 228, { align: 'right', color: PAL.B, shadow: null });
+  drawText(ctx, `${key('mute')}: SOUND ${muted ? 'OFF' : 'ON'}`, VIEW_W - 4, 5, { align: 'right', color: PAL.l });
 }
 
 // Debug: every sprite on sky and sand, for checking the art.

@@ -1,7 +1,7 @@
 // World simulation. Pure logic (no DOM): driven by an input snapshot each
 // 60Hz step, reports sounds through world.events, and is drawn by render.js.
 
-import { TILE, parseLevel, moveBody, rectSolid, tileAt } from './level.js';
+import { TILE, parseLevel, moveBody, rectSolid, rectSecret, tileAt } from './level.js';
 
 export const VIEW_W = 256;
 export const VIEW_H = 240;
@@ -22,6 +22,8 @@ export const RELOAD_FRAMES = 42;
 export const MAX_FARTS = 3;
 export const FART_RADIUS = 64;
 export const FART_DAMAGE = 3;
+export const TURBO_FRAMES = 600; // easter egg: 10 seconds of rapid-fire farts
+export const TURBO_RATE = 8; // frames between turbo farts
 
 export const ENEMY = {
   scorpion: { w: 24, h: 12, hp: 2, score: 100 },
@@ -61,7 +63,7 @@ function makePlayer(cx, by) {
     onGround: false, hitWall: false, coyote: 0, jumpBuf: 0, noCut: 0,
     hp: MAX_HP, inv: 0, stun: 0,
     ammo: CLIP, reload: 0, shootCd: 0, shootAnim: 0,
-    farts: 1, fartCd: 0, fartAnim: 0,
+    farts: 1, fartCd: 0, fartAnim: 0, turbo: 0,
     anim: 0,
   };
 }
@@ -89,6 +91,7 @@ export function createWorld(opts = {}) {
     camX: 0,
     shake: 0,
     god: !!opts.god,
+    secretFound: false,
     rand: mulberry32(1337),
     events: [],
     player: null,
@@ -116,6 +119,7 @@ export function createWorld(opts = {}) {
       case 'H': w.pickups.push({ type: 'heart', x: cx - 6, y: by - 17, w: 13, h: 12, phase: s.col * 5 }); break;
       case 'C': w.hazards.push({ x: cx - 5, y: by - 28, w: 10, h: 28, cx, by }); break;
       case 'K': w.checkpoints.push({ x: cx, y: by, active: false }); break;
+      case 'E': w.pickups.push({ type: 'chili', x: cx - 6, y: by - 16, w: 12, h: 14, phase: 0 }); break;
       case 'G': w.goal = { x: cx - 9, y: by - 30, w: 18, h: 30, cx, by }; break;
       default: throw new Error(`unknown spawn '${s.type}'`);
     }
@@ -160,7 +164,7 @@ function respawnPlayer(w) {
 export function hurtPlayer(w, fromX, pit = false) {
   const p = w.player;
   if (w.state !== 'play') return;
-  if (w.god) { if (pit) respawnPlayer(w); return; }
+  if (w.god || p.turbo > 0) { if (pit) respawnPlayer(w); return; } // turbo: untouchable
   if (!pit && p.inv > 0) return;
   p.hp--;
   w.shake = 8;
@@ -181,16 +185,24 @@ export function hurtPlayer(w, fromX, pit = false) {
   }
 }
 
-function fart(w) {
+// mini = one of the rapid-fire turbo farts: free, smaller on screen, no recoil.
+function fart(w, mini = false) {
   const p = w.player;
   const cx = p.x + p.w / 2, cy = p.y + p.h / 2;
-  p.farts--;
-  p.fartCd = 30;
-  p.fartAnim = 24;
-  w.shake = 14;
-  w.blasts.push({ x: cx, y: cy, t: 0, dur: 26, r: FART_RADIUS });
-  w.events.push('fart');
-  burst(w, cx, cy, 40, GAS, 3.4, 50, 5, -0.012);
+  if (mini) {
+    w.shake = Math.max(w.shake, 3);
+    w.blasts.push({ x: cx, y: cy, t: 0, dur: 16, r: FART_RADIUS, mini: true });
+    w.events.push('toot');
+    burst(w, cx, cy, 7, GAS, 3, 34, 4, -0.012);
+  } else {
+    p.farts--;
+    p.fartCd = 30;
+    p.fartAnim = 24;
+    w.shake = 14;
+    w.blasts.push({ x: cx, y: cy, t: 0, dur: 26, r: FART_RADIUS });
+    w.events.push('fart');
+    burst(w, cx, cy, 40, GAS, 3.4, 50, 5, -0.012);
+  }
 
   let kills = 0, pts = 0;
   for (const e of w.enemies) {
@@ -204,7 +216,7 @@ function fart(w) {
     popup(w, cx, p.y - 14, `${kills}X COMBO!`);
   }
   w.ebullets = w.ebullets.filter((b) => (b.x - cx) ** 2 + (b.y - cy) ** 2 > (FART_RADIUS + 8) ** 2);
-  if (!p.onGround) { p.vy = -4.2; p.noCut = 20; } // gas-powered double jump
+  if (!mini && !p.onGround) { p.vy = -4.2; p.noCut = 20; } // gas-powered double jump
 }
 
 function updatePlayer(w, inp) {
@@ -215,6 +227,10 @@ function updatePlayer(w, inp) {
   if (p.shootCd > 0) p.shootCd--;
   if (p.shootAnim > 0) p.shootAnim--;
   if (p.noCut > 0) p.noCut--;
+  if (p.turbo > 0) { // the easter egg: fart continuously, fear nothing
+    if (p.turbo % TURBO_RATE === 0) fart(w, true);
+    if (--p.turbo === 0) { p.inv = 90; w.events.push('turboEnd'); } // short grace when it wears off
+  }
   if (p.reload > 0 && --p.reload === 0) { p.ammo = CLIP; w.events.push('reload'); }
 
   if (p.stun > 0) p.stun--;
@@ -242,7 +258,7 @@ function updatePlayer(w, inp) {
       w.events.push('shoot');
       if (p.ammo === 0) p.reload = RELOAD_FRAMES;
     }
-    if (inp.fartPressed && p.farts > 0 && p.fartCd === 0) fart(w);
+    if (inp.fartPressed && p.farts > 0 && p.fartCd === 0 && p.turbo === 0) fart(w);
   }
 
   // Variable jump height: releasing jump early cuts the ascent.
@@ -341,7 +357,7 @@ function updateEnemy(w, e) {
 
   e.vy = Math.min(e.vy + PHYS.G, PHYS.MAX_FALL);
   const leaping = e.state === 'leap';
-  moveBody(L, e);
+  moveBody(L, e, !w.secretFound); // the false wall is solid to everyone but Rudy
   if (leaping && e.onGround) { e.state = 'idle'; e.cd = 45; e.vx = 0; }
   if (e.y > L.pxH + 32) e.dead = true; // fell in a pit: no score
 
@@ -355,12 +371,25 @@ function updatePlay(w, inp) {
   updatePlayer(w, inp);
   if (w.state !== 'play') return;
 
+  // The secret cave: revealed the moment Rudy steps through the false wall.
+  if (!w.secretFound) {
+    const mouth = L.secretMouth;
+    if (rectSecret(L, p.x, p.y, p.w, p.h)) {
+      w.secretFound = true;
+      w.events.push('secret');
+      popup(w, p.x + p.w / 2, p.y - 18, 'SECRET!');
+    } else if (mouth && w.frame % 90 === 0 && Math.abs(mouth.x - w.camX - VIEW_W / 2) < VIEW_W / 2) {
+      // the only clue: now and then a little gas seeps out of the rock
+      w.particles.push({ x: mouth.x, y: mouth.y - 12 - w.rand() * 12, vx: 0.25, vy: -0.12, grav: -0.004, size: 2, life: 70, max: 70, color: GAS[0] });
+    }
+  }
+
   // Rudy's bullets
   for (const b of w.bullets) {
     b.x += b.vx;
     b.life--;
     if (b.life <= 0 || b.x < w.camX - 16 || b.x > w.camX + VIEW_W + 16) { b.dead = true; continue; }
-    if (rectSolid(L, b.x, b.y, b.w, b.h)) {
+    if (rectSolid(L, b.x, b.y, b.w, b.h, !w.secretFound)) {
       b.dead = true;
       burst(w, b.x + 2, b.y, 3, SPARK, 1, 8, 1);
       continue;
@@ -384,7 +413,7 @@ function updatePlay(w, inp) {
   for (const b of w.ebullets) {
     b.x += b.vx;
     b.life--;
-    if (b.life <= 0 || rectSolid(L, b.x, b.y, b.w, b.h)) b.dead = true;
+    if (b.life <= 0 || rectSolid(L, b.x, b.y, b.w, b.h, !w.secretFound)) b.dead = true;
     else if (overlap(b, p) && p.inv === 0) { b.dead = true; hurtPlayer(w, b.x - b.vx * 4); }
   }
   w.ebullets = w.ebullets.filter((b) => !b.dead);
@@ -403,6 +432,11 @@ function updatePlay(w, inp) {
     if (k.type === 'beans') {
       p.farts = Math.min(MAX_FARTS, p.farts + 1);
       popup(w, k.x + 5, k.y - 4, 'BEANS!');
+    } else if (k.type === 'chili') {
+      p.turbo = TURBO_FRAMES;
+      w.score += 950; // 1000 in all
+      w.events[w.events.length - 1] = 'turbo';
+      popup(w, k.x + 5, k.y - 6, '5-ALARM CHILI!');
     } else {
       p.hp = Math.min(MAX_HP, p.hp + 1);
       popup(w, k.x + 5, k.y - 4, '+1');

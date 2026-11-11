@@ -8,6 +8,7 @@ let muted = false;
 let musicTimer = null;
 let musicStep = 0;
 let musicNext = 0;
+let tempo = 1; // music speed multiplier (raised during the turbo easter egg)
 
 // Browsers only allow audio after a user gesture, so this is called on key press.
 export function unlock() {
@@ -81,7 +82,11 @@ const SFX = {
   hurt() { tone('sawtooth', 320, 70, 0.3, 0.25); },
   die() { stopMusic(); arp([523, 494, 466, 440, 349, 262, 196], 0.11, 0.16, 0.2); },
   win() { stopMusic(); arp([523, 659, 784, 1047, 784, 1047], 0.12, 0.2, 0.2); tone('triangle', 131, 131, 0.9, 0.3); },
-  start() { arp([392, 523, 659, 784], 0.06, 0.1, 0.15); },
+  start() { tempo = 1; arp([392, 523, 659, 784], 0.06, 0.1, 0.15); },
+  secret() { arp([659, 622, 587, 494, 523, 659, 784, 1047], 0.07, 0.1, 0.16, 'triangle'); },
+  toot() { const f = 110 + Math.random() * 70; tone('sawtooth', f, f * 0.55, 0.11, 0.22); noise(0.07, 0.18, 400); },
+  turbo() { tempo = 1.4; arp([392, 494, 587, 784, 988, 1175], 0.05, 0.12, 0.18); }, // the music speeds up too
+  turboEnd() { tempo = 1; arp([784, 587, 392], 0.08, 0.12, 0.14); },
   fart() {
     const t = ac.currentTime, dur = 0.7;
     const o = ac.createOscillator(), g = ac.createGain();
@@ -231,7 +236,7 @@ function drumsAt(t, st) {
   if (st % 4 === 0) toneAt(t, 'sine', 130, 46, 0.13, 0.55, musicBus); // kick on 1 and 3
   if (st % 4 === 2) noiseAt(t, 0.1, 0.2, 2200, musicBus, 'bandpass'); // brushed backbeat
   noiseAt(t, 0.025, 0.05, 7000, musicBus, 'highpass'); // train-beat shuffle
-  noiseAt(t + STEP / 2, 0.02, 0.028, 7000, musicBus, 'highpass');
+  noiseAt(t + STEP / 2 / tempo, 0.02, 0.028, 7000, musicBus, 'highpass');
 }
 
 // Everything that sounds on one eighth-note step of the 16-bar loop.
@@ -259,7 +264,7 @@ function playStep(step, t) {
     if (note > 0) {
       let held = 1;
       while (st + held < 8 && line[st + held] === -1) held++;
-      fiddleAt(t, note, held * STEP * 0.96);
+      fiddleAt(t, note, (held * STEP * 0.96) / tempo);
     }
   }
 }
@@ -267,7 +272,7 @@ function playStep(step, t) {
 function scheduleMusic() {
   while (musicNext < ac.currentTime + 0.25) {
     playStep(musicStep, musicNext);
-    musicNext += STEP;
+    musicNext += STEP / tempo;
     musicStep = (musicStep + 1) % MUSIC_STEPS;
   }
 }
@@ -291,7 +296,7 @@ export function selfTest() {
 
 export function startMusic(restart = true) {
   if (!ac || musicTimer) return;
-  if (restart) musicStep = 0;
+  if (restart) { musicStep = 0; tempo = 1; }
   musicNext = ac.currentTime + 0.05;
   musicTimer = setInterval(scheduleMusic, 50);
 }

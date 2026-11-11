@@ -51,7 +51,7 @@ export const RAMP = {
 const INK = '#1a1420';
 const WHITE = '#ffffff';
 
-// ---- Rudy Tootin' (26x28, faces right, feet on the bottom row) ----------------
+// ---- Rudy Tootin' (26x34, faces right, feet on the bottom row) ----------------
 // A pose is: legs [[hipX, hipY, ankleX, ankleY, bootX, bootY] x2 (far, near)],
 // bob (upper body offset in px), eyes ('open' | 'shut' | 'dazed'), arms ('gun' | 'up').
 const POSES = {
@@ -64,9 +64,11 @@ const POSES = {
   hurt: { eyes: 'dazed', arms: 'up', legs: [[11, 22.5, 8, 24.2, 7, 25.2], [15, 22.5, 18.2, 24, 19.4, 24.8]] },
 };
 
+const HAT_ROOM = 6; // extra rows above the head for the ten-gallon hat
+
 function rudy(pose) {
-  const p = new Pix(26, 28);
-  const b = pose.bob || 0;
+  const p = new Pix(26, 28 + HAT_ROOM);
+  const b = (pose.bob || 0) + HAT_ROOM; // y offset of the upper body
   const armsUp = pose.arms === 'up';
   const R = RAMP;
 
@@ -75,8 +77,8 @@ function rudy(pose) {
   else { p.limb(7.5, 17.5 + b, 6.2, 21 + b, 1.5, R.red); p.ball(6, 22 + b, 1.4, 1.4, R.skin); }
 
   for (const [hx, hy, ax, ay, bx, by] of pose.legs) {
-    p.limb(hx, hy, ax, ay, 1.9, R.jeans);
-    p.ball(bx, by, 2.9, 1.5, R.boot);
+    p.limb(hx, hy + HAT_ROOM, ax, ay + HAT_ROOM, 1.9, R.jeans);
+    p.ball(bx, by + HAT_ROOM, 2.9, 1.5, R.boot);
   }
   p.ball(13, 22.2 + b, 5.4, 1.9, R.jeans); // hips
 
@@ -89,6 +91,12 @@ function rudy(pose) {
   p.px(12, 22 + b, R.gold[1]).px(13, 22 + b, R.gold[2]);
 
   p.ball(13, 16.3 + b, 4.6, 1.6, R.red); // bandana
+
+  // ten-gallon hat, part 1: the tall crown (goes behind the head), pinched at the top
+  p.limb(13, 5.2 + b, 13, -0.6 + b, 5.3, R.hat, 4.5);
+  p.poly([[11.3, -5.6 + b], [14.7, -5.6 + b], [13, -3 + b]], null, true);
+  p.rect(13, -3 + b, 1, 6, R.hat[1]); // centre crease
+  p.rect(12, -3 + b, 1, 4, R.hat[4]);
 
   // head
   p.ball(13, 11 + b, 5.6, 4.6, R.skin);
@@ -110,17 +118,20 @@ function rudy(pose) {
   p.ball(10, 13.2 + b, 3.8, 1.6, R.stache);
   p.ball(16.4, 13.2 + b, 3.8, 1.6, R.stache);
 
-  // hat
-  p.ball(13, 3.6 + b, 5, 3.6, R.hat);
-  p.rect(9, 5 + b, 8, 1, R.red[1]);
-  p.px(9, 5 + b, R.red[2]).px(10, 5 + b, R.red[3]);
-  p.ball(13, 6.6 + b, 11, 1.8, R.hat);
+  // ten-gallon hat, part 2: band with a concho, and a wide brim curled up at the edges
+  p.rect(8, 3 + b, 10, 2, R.red[1]);
+  p.rect(8, 3 + b, 10, 1, R.red[2]);
+  p.px(8, 3 + b, R.red[3]).px(9, 3 + b, R.red[3]);
+  p.px(13, 3 + b, R.gold[3]).px(13, 4 + b, R.gold[1]);
+  p.ball(13, 6.6 + b, 12.4, 1.9, R.hat);
+  p.ball(2.6, 5.5 + b, 2.2, 1.5, R.hat);
+  p.ball(23.4, 5.5 + b, 2.2, 1.5, R.hat);
 
   // front arm, held out for the six-shooter
   if (armsUp) { p.limb(18, 18 + b, 21, 14.5 + b, 1.5, R.red); p.ball(21.6, 13.6 + b, 1.5, 1.5, R.skin); }
   else { p.limb(18, 18 + b, 21.5, 19 + b, 1.5, R.red); p.ball(22.6, 19 + b, 1.5, 1.5, R.skin); }
 
-  p.meta = { bob: b, gun: !armsUp };
+  p.meta = { gun: !armsUp, gunY: 16 + b }; // gunY: where the six-shooter sits
   return p;
 }
 
@@ -281,6 +292,8 @@ function beans(ramp = RAMP.steel, label = RAMP.label) { // 12x14
   p.ball(6, 2.4, 5, 1.5, ramp.slice(1));
   if (label === RAMP.label) { // a few beans on the label
     for (const [x, y] of [[3, 7], [5, 6], [6, 8], [8, 7]]) p.px(x, y, '#7a3a18').px(x + 1, y, '#a85a2a');
+  } else if (label === RAMP.red) { // 5-alarm chili: flames on the label
+    for (const [x, y] of [[3, 8], [4, 7], [5, 8], [6, 6], [7, 8], [8, 7]]) p.px(x, y, RAMP.gold[2]).px(x, y + 1, RAMP.gold[1]);
   }
   return p;
 }
@@ -323,6 +336,7 @@ export function buildSprites() {
     cactus: cactus(),
     beans: beans(),
     beansEmpty: beans(RAMP.empty, RAMP.empty),
+    chili: beans(RAMP.gold, RAMP.red), // the easter egg
     heart: heart(),
     heartEmpty: heart(RAMP.empty),
   });

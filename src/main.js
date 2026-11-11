@@ -289,6 +289,8 @@ function makeDebug() {
     }
     if (q.get('farts')) world.player.farts = Number(q.get('farts'));
     if (q.get('god')) world.god = true;
+    if (q.get('turbo')) world.player.turbo = Number(q.get('turbo'));
+    if (q.get('found')) world.secretFound = true;
     if (mode === 'pause') screen = 'pause';
     if (mode === 'gameover') { world.player.hp = 1; hurtPlayer(world, 0); }
     if (mode === 'won') { world.player.x = world.goal.x - 30; world.camX = world.level.pxW - VIEW_W; hold.push('right'); }
