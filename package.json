@@ -5,7 +5,10 @@
   "description": "Rootin' Tootin' - a retro sidescroller starring Rudy Tootin', the gassiest gun in the West.",
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 8000",
+    "start": "node server.js",
     "test": "node test/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

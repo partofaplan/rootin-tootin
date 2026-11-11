@@ -8,8 +8,8 @@ export const VIEW_H = 240;
 
 export const PHYS = {
   G: 0.25, // px/frame^2
-  JUMP: -4.6,
-  RUN: 1.4,
+  JUMP: -5.4,
+  RUN: 1.6,
   MAX_FALL: 5,
   BULLET: 4,
   COYOTE: 6,
@@ -20,13 +20,13 @@ export const MAX_HP = 3;
 export const CLIP = 6;
 export const RELOAD_FRAMES = 42;
 export const MAX_FARTS = 3;
-export const FART_RADIUS = 56;
+export const FART_RADIUS = 64;
 export const FART_DAMAGE = 3;
 
 export const ENEMY = {
-  scorpion: { w: 20, h: 10, hp: 2, score: 100 },
-  bandit: { w: 10, h: 18, hp: 3, score: 200 },
-  chupacabra: { w: 18, h: 12, hp: 2, score: 300 },
+  scorpion: { w: 24, h: 12, hp: 2, score: 100 },
+  bandit: { w: 12, h: 26, hp: 3, score: 200 },
+  chupacabra: { w: 26, h: 16, hp: 2, score: 300 },
 };
 
 export const NO_INPUT = Object.freeze({
@@ -55,7 +55,7 @@ const overlap = (a, b) =>
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 function makePlayer(cx, by) {
-  const w = 10, h = 14;
+  const w = 12, h = 20;
   return {
     x: cx - w / 2, y: by - h, w, h, vx: 0, vy: 0, face: 1,
     onGround: false, hitWall: false, coyote: 0, jumpBuf: 0, noCut: 0,
@@ -112,11 +112,11 @@ export function createWorld(opts = {}) {
       case 's': w.enemies.push(makeEnemy('scorpion', cx, by)); break;
       case 'b': w.enemies.push(makeEnemy('bandit', cx, by)); break;
       case 'c': w.enemies.push(makeEnemy('chupacabra', cx, by)); break;
-      case 'B': w.pickups.push({ type: 'beans', x: cx - 5, y: by - 13, w: 10, h: 10, phase: s.col * 5 }); break;
-      case 'H': w.pickups.push({ type: 'heart', x: cx - 5, y: by - 12, w: 9, h: 8, phase: s.col * 5 }); break;
-      case 'C': w.hazards.push({ x: cx - 4, y: by - 17, w: 8, h: 17, cx, by }); break;
+      case 'B': w.pickups.push({ type: 'beans', x: cx - 6, y: by - 18, w: 12, h: 14, phase: s.col * 5 }); break;
+      case 'H': w.pickups.push({ type: 'heart', x: cx - 6, y: by - 17, w: 13, h: 12, phase: s.col * 5 }); break;
+      case 'C': w.hazards.push({ x: cx - 5, y: by - 28, w: 10, h: 28, cx, by }); break;
       case 'K': w.checkpoints.push({ x: cx, y: by, active: false }); break;
-      case 'G': w.goal = { x: cx - 8, y: by - 24, w: 16, h: 24, cx, by }; break;
+      case 'G': w.goal = { x: cx - 9, y: by - 30, w: 18, h: 30, cx, by }; break;
       default: throw new Error(`unknown spawn '${s.type}'`);
     }
   }
@@ -137,7 +137,7 @@ function burst(w, x, y, n, colors, speed, life, size = 2, grav = 0.06) {
     const s = speed * (0.3 + w.rand() * 0.7);
     w.particles.push({
       x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, grav, size,
-      life: Math.round(life * (0.6 + w.rand() * 0.4)),
+      life: Math.round(life * (0.6 + w.rand() * 0.4)), max: life,
       color: colors[Math.floor(w.rand() * colors.length)],
     });
   }
@@ -190,7 +190,7 @@ function fart(w) {
   w.shake = 14;
   w.blasts.push({ x: cx, y: cy, t: 0, dur: 26, r: FART_RADIUS });
   w.events.push('fart');
-  burst(w, cx, cy, 36, GAS, 3.2, 46, 3, -0.01);
+  burst(w, cx, cy, 40, GAS, 3.4, 50, 5, -0.012);
 
   let kills = 0, pts = 0;
   for (const e of w.enemies) {
@@ -204,7 +204,7 @@ function fart(w) {
     popup(w, cx, p.y - 14, `${kills}X COMBO!`);
   }
   w.ebullets = w.ebullets.filter((b) => (b.x - cx) ** 2 + (b.y - cy) ** 2 > (FART_RADIUS + 8) ** 2);
-  if (!p.onGround) { p.vy = -3.8; p.noCut = 20; } // gas-powered double jump
+  if (!p.onGround) { p.vy = -4.2; p.noCut = 20; } // gas-powered double jump
 }
 
 function updatePlayer(w, inp) {
@@ -238,7 +238,7 @@ function updatePlayer(w, inp) {
       p.ammo--;
       p.shootCd = 12;
       p.shootAnim = 6;
-      w.bullets.push({ x: p.face > 0 ? p.x + p.w + 4 : p.x - 8, y: p.y + 5, w: 4, h: 2, vx: PHYS.BULLET * p.face, life: 70 });
+      w.bullets.push({ x: p.face > 0 ? p.x + p.w + 8 : p.x - 14, y: p.y + 9, w: 6, h: 3, vx: PHYS.BULLET * p.face, life: 70 });
       w.events.push('shoot');
       if (p.ammo === 0) p.reload = RELOAD_FRAMES;
     }
@@ -276,7 +276,7 @@ export function damageEnemy(w, e, dmg) {
     w.kills++;
     w.score += ENEMY[e.type].score;
     popup(w, cx, e.y - 4, String(ENEMY[e.type].score));
-    burst(w, cx, cy, 14, GORE, 2.2, 30, 2);
+    burst(w, cx, cy, 16, GORE, 2.4, 32, 3);
     w.events.push('kill');
     return true;
   }
@@ -297,14 +297,14 @@ function updateEnemy(w, e) {
   switch (e.type) {
     case 'scorpion':
       if (e.onGround && (e.hitWall || !groundAhead(L, e, e.face))) e.face = -e.face;
-      if (e.onGround) e.vx = 0.4 * e.face;
+      if (e.onGround) e.vx = 0.45 * e.face;
       break;
 
     case 'bandit':
       if (e.state === 'aim') {
         e.vx = 0;
         if (--e.t <= 0) {
-          w.ebullets.push({ x: e.face > 0 ? e.x + e.w + 2 : e.x - 6, y: e.y + 6, w: 4, h: 3, vx: 1.8 * e.face, life: 150 });
+          w.ebullets.push({ x: e.face > 0 ? e.x + e.w + 8 : e.x - 13, y: e.y + 9, w: 5, h: 5, vx: 2 * e.face, life: 150 });
           w.events.push('eshoot');
           e.state = 'idle';
           e.cd = 110;
@@ -326,13 +326,13 @@ function updateEnemy(w, e) {
     case 'chupacabra':
       if (e.state === 'crouch') {
         e.vx = 0;
-        if (--e.t <= 0) { e.state = 'leap'; e.vx = 2.3 * e.face; e.vy = -3.3; w.events.push('pounce'); }
+        if (--e.t <= 0) { e.state = 'leap'; e.vx = 2.5 * e.face; e.vy = -3.6; w.events.push('pounce'); }
       } else if (e.state !== 'leap') {
         e.face = toward;
         if (e.cd > 0) { e.cd--; e.vx = 0; }
-        else if (dist < 72 && dy < 40 && e.onGround) { e.state = 'crouch'; e.t = 22; e.vx = 0; }
+        else if (dist < 80 && dy < 40 && e.onGround) { e.state = 'crouch'; e.t = 22; e.vx = 0; }
         else if (dist < 200 && e.onGround) {
-          if (e.hitWall || !groundAhead(L, e, e.face)) { e.state = 'leap'; e.vx = 1.6 * e.face; e.vy = -3.6; }
+          if (e.hitWall || !groundAhead(L, e, e.face)) { e.state = 'leap'; e.vx = 1.8 * e.face; e.vy = -4; }
           else e.vx = 0.9 * e.face;
         } else if (e.onGround) e.vx = 0;
       }
@@ -415,7 +415,7 @@ function updatePlay(w, inp) {
       cp.active = true;
       w.respawn = { x: cp.x, y: cp.y };
       w.events.push('checkpoint');
-      popup(w, cp.x, cp.y - 34, 'CHECKPOINT');
+      popup(w, cp.x, cp.y - 50, 'CHECKPOINT');
     }
   }
 

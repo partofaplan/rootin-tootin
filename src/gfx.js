@@ -11,46 +11,27 @@ export function makeCanvas(w, h) {
   return c;
 }
 
-function mirrored(src) {
-  const c = makeCanvas(src.width, src.height);
+// Copies a Pix (RGBA buffer) onto a new canvas.
+export function pixToCanvas(pix) {
+  const c = makeCanvas(pix.w, pix.h);
   const g = c.getContext('2d');
-  g.translate(src.width, 0);
-  g.scale(-1, 1);
-  g.drawImage(src, 0, 0);
+  const img = g.createImageData(pix.w, pix.h);
+  img.data.set(pix.data);
+  g.putImageData(img, 0, 0);
   return c;
 }
 
-// Turns ASCII pixel rows into canvases: normal, mirrored, and all-white
-// (hit flash) versions. A 1px dark outline is added automatically so sprites
-// read against any background.
-export function bakeSprite(rows, { outline = true } = {}) {
-  const h = rows.length, w = rows[0].length;
-  const pad = outline ? 1 : 0;
-  const c = makeCanvas(w + pad * 2, h + pad * 2);
-  const white = makeCanvas(c.width, c.height);
-  const g = c.getContext('2d'), gw = white.getContext('2d');
-  if (outline) {
-    g.fillStyle = OUTLINE;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (rows[y][x] === '.') continue;
-        g.fillRect(x, y + 1, 3, 1);
-        g.fillRect(x + 1, y, 1, 3);
-      }
-    }
-  }
-  gw.drawImage(c, 0, 0);
-  gw.fillStyle = PAL.w;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const col = PAL[rows[y][x]];
-      if (!col) continue;
-      g.fillStyle = col;
-      g.fillRect(x + pad, y + pad, 1, 1);
-      gw.fillRect(x + pad, y + pad, 1, 1);
-    }
-  }
-  return { c, f: mirrored(c), white, whiteF: mirrored(white), w: c.width, h: c.height, pad };
+// Turns a Pix into drawable canvases: normal, mirrored, and all-white
+// (hit flash) versions. A 1px tinted outline is added so sprites read
+// against any background; pad is how far it hangs outside the art.
+export function bakeSprite(pix, { outline = true } = {}) {
+  const src = outline ? pix.outlined() : pix;
+  const flash = src.silhouette();
+  return {
+    c: pixToCanvas(src), f: pixToCanvas(src.mirrored()),
+    white: pixToCanvas(flash), whiteF: pixToCanvas(flash.mirrored()),
+    w: src.w, h: src.h, pad: outline ? 1 : 0, meta: pix.meta || {},
+  };
 }
 
 // x,y is the top-left of the sprite's own pixels (the outline hangs outside).
@@ -99,10 +80,16 @@ export function drawText(ctx, str, x, y, { color = PAL.w, shadow = OUTLINE, scal
   }
 }
 
-// Big two-tone logo lettering with a chunky outline and drop shadow.
-export function drawLogo(ctx, str, cx, y, scale, top = PAL.y, bottom = PAL.o) {
+// Big logo lettering: each of the 7 glyph rows gets its own colour from
+// `rows` (a top-to-bottom gradient), over a chunky outline and drop shadow.
+export const LOGO_GOLD = ['#fff6c8', '#ffe27a', '#ffc94a', '#ffa832', '#f08228', '#d85e22', '#a83c20'];
+export const LOGO_GAS = ['#f4ffc0', '#dcf77a', '#b8e64e', '#8fd03a', '#66b030', '#488c2c', '#2f6828'];
+export const LOGO_RED = ['#ffd0b0', '#ff9a78', '#f4604a', '#e04036', '#c02a30', '#96202c', '#6e1626'];
+
+export function drawLogo(ctx, str, cx, y, scale, rows = LOGO_GOLD) {
   const x0 = Math.round(cx - textWidth(str, scale) / 2);
   const W = 5 * scale, H = 7 * scale;
+  y = Math.round(y);
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < str.length; i++) {
       const ch = str[i];
@@ -114,9 +101,7 @@ export function drawLogo(ctx, str, cx, y, scale, top = PAL.y, bottom = PAL.o) {
           ctx.drawImage(dark, gx + ox, y + oy, W, H);
         }
       } else {
-        ctx.drawImage(glyph(ch, top), gx, y, W, H);
-        ctx.drawImage(glyph(ch, bottom), 0, 4, 5, 3, gx, y + 4 * scale, W, 3 * scale);
-        ctx.drawImage(glyph(ch, PAL.w), 0, 0, 5, 1, gx, y, W, Math.max(1, scale >> 1));
+        for (let r = 0; r < 7; r++) ctx.drawImage(glyph(ch, rows[r]), 0, r, 5, 1, gx, y + r * scale, W, scale);
       }
     }
   }

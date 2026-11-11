@@ -55,6 +55,12 @@ export function bindingName(code) {
   return code.toUpperCase().slice(0, 9);
 }
 
+// The character a key types (A-Z, 0-9), or null. Used for entering initials.
+export function typedChar(code) {
+  const m = /^(?:Key([A-Z])|Digit(\d)|Numpad(\d))$/.exec(code);
+  return m ? m[1] || m[2] || m[3] : null;
+}
+
 // Esc always pauses / goes back, and browser-level keys are left alone.
 export function isBindable(code) {
   return typeof code === 'string' && code !== '' && code !== 'Unidentified' && code !== 'Escape' &&
@@ -184,6 +190,7 @@ export function createInput(target, canvas, storage) {
           mouseX: mouse.x,
           mouseY: mouse.y,
           mouseMoved: mouse.moved,
+          typed: [...pressed].map(typedChar).filter(Boolean), // letters/digits, for text entry
         },
       };
       pressed.clear();

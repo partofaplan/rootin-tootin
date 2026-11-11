@@ -1,6 +1,6 @@
 // Headless checks for the game logic and data. Run with: npm test
 import assert from 'node:assert/strict';
-import { PAL, SPRITES, FONT } from '../src/sprites.js';
+import { buildSprites, buildTiles, FONT } from '../src/sprites.js';
 import { LEVEL_ROWS, ROWS, TILE, SOLID_CHARS, SPAWN_CHARS, parseLevel, surfaceRow, tileAt } from '../src/level.js';
 import {
   createWorld, updateWorld, makeEnemy, NO_INPUT, PHYS, CLIP, RELOAD_FRAMES, MAX_HP,
@@ -8,12 +8,27 @@ import {
 import {
   createInput, normalizeBindings, bindingName, ACTIONS, SLOTS, DEFAULT_BINDINGS, STORAGE_KEY,
 } from '../src/input.js';
-import { TITLE_MENU, PAUSE_MENU, menuItemAt, controlsCellAt, CTL, CTL_RESET_ROW, CTL_BACK_ROW } from '../src/ui.js';
+import {
+  TITLE_MENU, PAUSE_MENU, menuItemAt, controlsCellAt, CTL, CTL_RESET_ROW, CTL_BACK_ROW, INITIALS, initialsHitAt,
+} from '../src/ui.js';
+import {
+  normalizeScores, addScore, qualifies, cleanName, cleanScore, createScoreStore, MAX_SCORES, NAME_CHARS,
+} from '../src/hiscores.js';
+import { TUNE } from '../src/audio.js';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let passed = 0;
+const running = [];
 function test(name, fn) {
+  running.push(run1(name, fn));
+}
+async function run1(name, fn) {
   try {
-    fn();
+    await fn();
     passed++;
     console.log(`  ok  ${name}`);
   } catch (err) {
@@ -38,12 +53,34 @@ function emptyWorld() {
 }
 
 // ---- data validation --------------------------------------------------------
-test('sprites are rectangular and use known palette chars', () => {
-  for (const [name, rows] of Object.entries(SPRITES)) {
-    rows.forEach((row, i) => {
-      assert.equal(row.length, rows[0].length, `${name} row ${i} has length ${row.length}`);
-      for (const ch of row) assert.ok(ch in PAL, `${name} row ${i}: unknown colour '${ch}'`);
-    });
+test('sprites and tiles build with the expected sizes', () => {
+  const sprites = buildSprites();
+  const sizes = { rudyIdle: [26, 28], gun: [12, 7], scorpionA: [36, 22], banditA: [30, 32], chupaA: [38, 26], cactus: [22, 34], beans: [12, 14], heart: [13, 12] };
+  for (const [name, [w, h]] of Object.entries(sizes)) {
+    assert.equal(sprites[name].w, w, `${name} width`);
+    assert.equal(sprites[name].h, h, `${name} height`);
+  }
+  for (const name of ['rudyIdle', 'rudyRunA', 'rudyRunB', 'rudyRunC', 'rudyJump', 'rudyFart', 'rudyHurt', 'scorpionB', 'banditB', 'chupaB', 'chupaLeap', 'beansEmpty', 'heartEmpty']) {
+    assert.ok(sprites[name], `missing sprite ${name}`);
+  }
+  for (const [name, pix] of Object.entries(sprites)) {
+    const fill = pix.count() / (pix.w * pix.h);
+    assert.ok(fill > 0.15 && fill < 0.95, `${name} looks wrong: ${Math.round(fill * 100)}% filled`);
+    const o = pix.outlined();
+    assert.equal(o.w, pix.w + 2);
+    assert.ok(o.count() > pix.count(), `${name} outline adds pixels`);
+    assert.equal(o.mirrored().count(), o.count());
+  }
+  // Rudy's feet reach the bottom row in every grounded pose (so he stands on the floor).
+  for (const name of ['rudyIdle', 'rudyRunA', 'rudyRunC', 'rudyFart']) {
+    const pix = sprites[name];
+    let feet = 0;
+    for (let x = 0; x < pix.w; x++) feet += pix.alpha(x, pix.h - 1) ? 1 : 0;
+    assert.ok(feet >= 3, `${name} has no feet on the ground`);
+  }
+  const tiles = buildTiles();
+  for (const [name, variants] of Object.entries(tiles)) {
+    for (const t of variants) assert.equal(t.count(), 256, `${name} tile must be fully opaque`);
   }
 });
 
@@ -317,9 +354,10 @@ test('binding names fit the font and the slot width', () => {
 
 test('menus and the controls screen respond to the mouse', () => {
   const t = fakeInput();
-  t.move(100 + 128 * 2, 50 + 110 * 2); // canvas is drawn at 2x, offset (100, 50)
+  const y0 = TITLE_MENU.y + 2;
+  t.move(100 + 128 * 2, 50 + y0 * 2); // canvas is drawn at 2x, offset (100, 50)
   const s = t.input.poll();
-  assert.ok(s.ui.mouseMoved && Math.abs(s.ui.mouseX - 128) < 0.01 && Math.abs(s.ui.mouseY - 110) < 0.01);
+  assert.ok(s.ui.mouseMoved && Math.abs(s.ui.mouseX - 128) < 0.01 && Math.abs(s.ui.mouseY - y0) < 0.01);
   assert.equal(menuItemAt(TITLE_MENU, s.ui.mouseX, s.ui.mouseY), 0);
   assert.equal(menuItemAt(TITLE_MENU, 128, TITLE_MENU.y + TITLE_MENU.step + 2), 1);
   assert.equal(menuItemAt(TITLE_MENU, 10, 10), -1);
@@ -336,6 +374,172 @@ test('menus and the controls screen respond to the mouse', () => {
   assert.ok(CTL.slotX[SLOTS - 1] + CTL.slotW <= 256, 'slots fit on screen');
 });
 
+// ---- hi scores ---------------------------------------------------------------------
+test('hi-score rules: names, ordering, top ten', () => {
+  assert.equal(cleanName('zp!'), 'ZP');
+  assert.equal(cleanName('rudy tootin'), 'RUD');
+  assert.equal(cleanName('<b>'), 'B');
+  assert.equal(cleanName('!!!'), null);
+  assert.equal(cleanName(null), null);
+  assert.equal(cleanScore(1200), 1200);
+  for (const bad of [-1, 1.5, '900', NaN, 1e9, null]) assert.equal(cleanScore(bad), null);
+
+  let list = [];
+  for (let i = 1; i <= 12; i++) list = addScore(list, `P${i}`, i * 100, i).list;
+  assert.equal(list.length, MAX_SCORES);
+  assert.deepEqual(list.map((e) => e.score), [1200, 1100, 1000, 900, 800, 700, 600, 500, 400, 300]);
+  assert.ok(!qualifies(list, 300), 'must beat the last place');
+  assert.ok(qualifies(list, 301));
+  assert.ok(!qualifies([], 0), 'a zero score never qualifies');
+  assert.equal(addScore(list, 'LOW', 100).rank, -1);
+  const tie = addScore(list, 'TIE', 1200, 99);
+  assert.equal(tie.rank, 1, 'a tie goes below the earlier score');
+  assert.equal(tie.list[0].name, 'P12');
+  assert.equal(addScore(list, 'TOP', 5000).rank, 0);
+  assert.deepEqual(normalizeScores('junk'), []);
+  assert.deepEqual(normalizeScores([{ name: 'ok', score: 5 }, { name: '', score: 5 }, { name: 'X', score: -2 }, null]), [{ name: 'OK', score: 5, at: 0 }]);
+});
+
+function memoryStorage() {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), map: m };
+}
+
+test('score store falls back to this device, then syncs when the server answers', async () => {
+  const storage = memoryStorage();
+  let online = false;
+  let server = [];
+  const fetchFn = async (url, opts = {}) => {
+    if (!online) throw new Error('offline');
+    let rank;
+    if (opts.method === 'POST') {
+      const body = JSON.parse(opts.body);
+      const r = addScore(server, body.name, body.score);
+      server = r.list; rank = r.rank;
+    }
+    return { ok: true, json: async () => ({ scores: server, rank }) };
+  };
+  const store = createScoreStore({ fetchFn, storage });
+  await store.refresh();
+  assert.equal(store.isShared(), false);
+  const first = await store.submit('zp', 4200);
+  assert.deepEqual([first.rank, first.shared], [0, false]);
+  assert.equal(store.best().name, 'ZP');
+
+  // A new page load on the same device still has it...
+  const again = createScoreStore({ fetchFn, storage });
+  assert.equal(again.best().score, 4200);
+  // ...and once the server is reachable the offline score is uploaded.
+  online = true;
+  server = [{ name: 'AAA', score: 9000, at: 1 }];
+  await again.refresh();
+  assert.equal(again.isShared(), true);
+  assert.deepEqual(again.list().map((e) => e.name), ['AAA', 'ZP']);
+  assert.deepEqual(server.map((e) => e.name), ['AAA', 'ZP']);
+  const second = await again.submit('BOB', 9500);
+  assert.deepEqual([second.rank, second.shared], [0, true]);
+  assert.equal((await again.submit('LOW', 0)).rank, -1);
+});
+
+test('server keeps one shared board across players and restarts', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'rootin-'));
+  const file = path.join(dir, 'scores.json');
+  const port = 20000 + (process.pid % 20000);
+  const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const base = `http://127.0.0.1:${port}`;
+  const start = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['server.js'], { cwd: root, env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', SCORES_FILE: file } });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    child.stdout.on('data', (d) => { if (String(d).includes('running at')) resolve(child); });
+    child.on('exit', (code) => reject(new Error(`server exited (${code}): ${err}`)));
+  });
+  const stop = (child) => new Promise((resolve) => { child.removeAllListeners('exit'); child.on('exit', resolve); child.kill(); });
+  const post = (body, raw) => fetch(`${base}/api/scores`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: raw ?? JSON.stringify(body) });
+
+  let child = await start();
+  try {
+    assert.deepEqual((await (await fetch(`${base}/api/scores`)).json()).scores, []);
+    // Two different "players" (two stores, separate browsers) share the board.
+    const alice = createScoreStore({ fetchFn: (u, o) => fetch(`${base}/${u}`, o), storage: memoryStorage() });
+    const bob = createScoreStore({ fetchFn: (u, o) => fetch(`${base}/${u}`, o), storage: memoryStorage() });
+    assert.deepEqual(await alice.submit('ali', 3000), { rank: 0, shared: true });
+    assert.deepEqual(await bob.submit('bob', 5000), { rank: 0, shared: true });
+    await alice.refresh();
+    assert.deepEqual(alice.list().map((e) => [e.name, e.score]), [['BOB', 5000], ['ALI', 3000]]);
+
+    // Bad input is rejected and changes nothing.
+    assert.equal((await post({ name: '***', score: 10 })).status, 400);
+    assert.equal((await post({ name: 'ABC', score: 'lots' })).status, 400);
+    assert.equal((await post(null, '{nope')).status, 400);
+    assert.equal((await post(null, JSON.stringify({ name: 'ABC', score: 1, pad: 'x'.repeat(5000) }))).status, 413);
+    assert.equal((await fetch(`${base}/api/scores`, { method: 'DELETE' })).status, 405);
+    for (let i = 0; i < 12; i++) await post({ name: `N${i}`, score: 100 + i });
+    const full = (await (await fetch(`${base}/api/scores`)).json()).scores;
+    assert.equal(full.length, MAX_SCORES);
+    assert.equal(full[0].name, 'BOB');
+
+    // Only the game itself is served.
+    assert.equal((await fetch(`${base}/`)).status, 200);
+    assert.equal((await fetch(`${base}/src/main.js`)).status, 200);
+    for (const p of ['/server.js', '/package.json', '/.git/config', '/data/scores.json', '/src/../server.js', '/src/%2e%2e/server.js', '/test/smoke.mjs']) {
+      assert.equal((await fetch(`${base}${p}`)).status, 404, `${p} must not be served`);
+    }
+
+    // Scores survive a restart.
+    await stop(child);
+    assert.equal(JSON.parse(await readFile(file, 'utf8')).length, MAX_SCORES);
+    child = await start();
+    assert.equal((await (await fetch(`${base}/api/scores`)).json()).scores[0].name, 'BOB');
+  } finally {
+    await stop(child);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('initials entry: typing, and mouse targets', () => {
+  const t = fakeInput();
+  t.key('KeyZ'); t.key('Digit7'); t.key('ArrowUp'); t.key('Comma');
+  const s = t.input.poll();
+  assert.deepEqual(s.ui.typed, ['Z', '7']);
+  for (const ch of s.ui.typed) assert.ok(NAME_CHARS.includes(ch));
+  const w = 5 * INITIALS.scale;
+  INITIALS.slotX.forEach((x, i) => {
+    assert.deepEqual(initialsHitAt(x + w / 2, INITIALS.upY + 3), { type: 'up', i });
+    assert.deepEqual(initialsHitAt(x + w / 2, INITIALS.downY + 3), { type: 'down', i });
+    assert.deepEqual(initialsHitAt(x + w / 2, INITIALS.y + 10), { type: 'slot', i });
+  });
+  assert.deepEqual(initialsHitAt(128, INITIALS.okY + 3), { type: 'ok' });
+  assert.equal(initialsHitAt(10, 10), null);
+});
+
+// ---- music ---------------------------------------------------------------------------
+test('the country tune is well formed', () => {
+  const { PROGRESSION, CHORDS, WALK, BANJO, FIDDLE, ROLL, MUSIC_STEPS } = TUNE;
+  assert.equal(PROGRESSION.length, 16);
+  assert.equal(MUSIC_STEPS, 128);
+  assert.equal(BANJO.length + FIDDLE.length, PROGRESSION.length);
+  // Major key, three chords: I, IV and V of G.
+  assert.deepEqual([...new Set(PROGRESSION)].sort(), ['C', 'D', 'G']);
+  const G_MAJOR = new Set([0, 2, 4, 6, 7, 9, 11]); // pitch classes: C D E F# G A B
+  const inKey = (m) => G_MAJOR.has(m % 12);
+  for (const [name, c] of Object.entries(CHORDS)) {
+    for (const m of [...c.bass, ...c.strum, ...c.roll]) assert.ok(inKey(m), `${name} chord note ${m}`);
+    assert.equal(c.roll.length, 4);
+  }
+  for (const i of ROLL) assert.ok(i >= 0 && i < 4);
+  for (const row of [...BANJO, ...FIDDLE]) {
+    assert.equal(row.length, 8);
+    for (const m of row) assert.ok(m === 0 || m === -1 || (m >= 55 && m <= 88 && (inKey(m) || m % 12 === 1 || m % 12 === 8)), `note ${m}`);
+  }
+  for (const row of BANJO) assert.ok(!row.includes(-1));
+  for (const row of FIDDLE) assert.notEqual(row[0], -1, 'a held note cannot start a bar');
+  for (let b = 0; b < 16; b++) { // every chord change has a bass walk-up defined
+    const a = PROGRESSION[b], n = PROGRESSION[(b + 1) % 16];
+    if (a !== n) assert.ok(WALK[`${a}>${n}`], `no bass walk for ${a}>${n}`);
+  }
+});
+
 // ---- whole-level runs ------------------------------------------------------------
 // A simple bot: run right, shoot, jump at walls and gaps.
 function botInput(w, prev) {
@@ -345,7 +549,8 @@ function botInput(w, prev) {
   const wallCol = Math.floor((p.x + p.w + 10) / TILE);
   let groundBelow = false;
   for (let r = footRow + 1; r < L.h; r++) groundBelow = groundBelow || !!tileAt(L, edgeCol, r);
-  const wall = !!tileAt(L, wallCol, footRow);
+  let wall = false; // anything solid ahead between head and feet
+  for (let r = Math.floor(p.y / TILE); r <= footRow; r++) wall = wall || !!tileAt(L, wallCol, r);
   const wantJump = p.onGround && (wall || !groundBelow);
   return input({ right: true, shoot: true, jump: wantJump || !p.onGround, jumpPressed: wantJump && !prev.jump });
 }
@@ -381,5 +586,6 @@ test('mortal bot run stays sane for 6000 frames', () => {
   console.log(`        mortal bot ended in state '${w.state}' at col ${Math.floor(w.player.x / TILE)}, hp ${w.player.hp}`);
 });
 
+await Promise.all(running);
 console.log(process.exitCode ? '\nSome tests failed.' : `\nAll ${passed} tests passed.`);
 if (process.argv.includes('--map')) console.log(LEVEL_ROWS.join('\n'));
