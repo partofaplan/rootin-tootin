@@ -1,8 +1,10 @@
 // All drawing: parallax background, tiles, entities, HUD and menu screens.
 
-import { PAL, RAMP, buildSprites, buildTiles, cloud } from './sprites.js';
+import { PAL, RAMP, buildSprites, buildTiles, buildProps, cloud } from './sprites.js';
 import { TILE, tileAt, secretAt } from './level.js';
-import { VIEW_W, VIEW_H, MAX_HP, MAX_FARTS, CLIP, RELOAD_FRAMES, TURBO_FRAMES } from './game.js';
+import {
+  VIEW_W, VIEW_H, MAX_HP, MAX_FARTS, CLIP, RELOAD_FRAMES, TURBO_FRAMES, ENEMY, BOSS_NAME, DIALOG_SPEED,
+} from './game.js';
 import { ACTIONS, SLOTS, bindingName } from './input.js';
 import { TITLE_MENU, PAUSE_MENU, CTL, CTL_RESET_ROW, CTL_BACK_ROW, INITIALS } from './ui.js';
 import { MAX_SCORES } from './hiscores.js';
@@ -26,6 +28,8 @@ export function initRender() {
   bg.far = bakeFar();
   bg.mid = bakeMid();
   bg.dunes = bakeDunes();
+  bg.saloonWall = bakeSaloonWall();
+  bg.saloonNear = bakeSaloonNear();
 }
 
 // ---- background baking -------------------------------------------------------------
@@ -142,7 +146,158 @@ function drawLayer(ctx, img, offset, y = 0) {
   if (x + BG_W < VIEW_W) ctx.drawImage(img, x + BG_W, y);
 }
 
-function drawBackdrop(ctx, cam, time = 0) {
+// ---- the saloon interior ------------------------------------------------------------
+function dartboard(g, cx, cy, r, bull = '#d03030') {
+  for (const [rr, col] of [[r, '#2a1810'], [r - 2, '#e8dcc0'], [r - 4, '#2a2836'], [r - 7, '#e8dcc0'], [r - 9, '#2f7a36'], [2, bull]]) {
+    if (rr > 0) fillCircle(g, cx, cy, rr, col);
+  }
+  g.fillStyle = 'rgba(42,24,16,0.55)';
+  g.fillRect(cx - r + 2, cy, r * 2 - 3, 1);
+  g.fillRect(cx, cy - r + 2, 1, r * 2 - 3);
+}
+
+// The back wall, one 512px stretch that repeats for ever: the bar, a
+// dartboard, a wanted poster and a poker game.
+function bakeSaloonWall() {
+  const c = makeCanvas(BG_W, VIEW_H), g = c.getContext('2d');
+  const props = buildProps();
+  const W = { dark: '#3a2012', shade: '#5a3418', mid: '#8a5a30', lit: '#c08850', pale: '#e8b878' };
+
+  // wallpaper above, wood panelling below
+  gradient(g, 0, 0, BG_W, 124, [[0, '#4a1822'], [1, '#7c2e36']], 4);
+  for (let x = 0; x < BG_W; x += 16) {
+    g.fillStyle = 'rgba(30,8,16,0.35)'; g.fillRect(x, 0, 2, 124);
+    g.fillStyle = '#b8863c';
+    for (let y = 24 + ((x >> 4) & 1) * 8; y < 118; y += 16) { g.fillRect(x + 8, y, 1, 3); g.fillRect(x + 7, y + 1, 3, 1); }
+  }
+  gradient(g, 0, 124, BG_W, 84, [[0, '#7a4c28'], [1, '#4a2a16']], 4);
+  for (let x = 0; x < BG_W; x += 32) {
+    g.fillStyle = W.dark; g.fillRect(x + 3, 132, 26, 1); g.fillRect(x + 3, 132, 1, 62);
+    g.fillStyle = '#9a6a3c'; g.fillRect(x + 4, 193, 26, 1); g.fillRect(x + 29, 133, 1, 61);
+  }
+  g.fillStyle = W.lit; g.fillRect(0, 121, BG_W, 3);
+  g.fillStyle = W.dark; g.fillRect(0, 124, BG_W, 1); g.fillRect(0, 200, BG_W, 8);
+
+  // --- the bar: shelves of bottles, a mirror, the barkeep, the counter and stools
+  g.fillStyle = W.dark; g.fillRect(26, 42, 164, 78);
+  gradient(g, 28, 44, 160, 74, [[0, '#6e4424'], [1, '#4a2c18']], 4);
+  g.fillStyle = W.lit; g.fillRect(78, 48, 60, 44);
+  gradient(g, 80, 50, 56, 40, [[0, '#c4dae2'], [1, '#7a98a8']], 3);
+  g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(88, 52, 2, 12); g.fillRect(92, 52, 1, 18); g.fillRect(120, 70, 2, 14);
+  const glassCols = ['#3a8a5a', '#b8863c', '#8c2330', '#3a6ea5', '#e8dcc0', '#6ac08a', '#d87a3c'];
+  const shelf = (x0, x1, y) => {
+    g.fillStyle = W.lit; g.fillRect(x0, y, x1 - x0, 2);
+    g.fillStyle = W.dark; g.fillRect(x0, y + 2, x1 - x0, 1);
+    for (let x = x0 + 2, i = x0; x < x1 - 4; x += 6, i += 3) {
+      const h = 8 + (i * 7) % 5;
+      g.fillStyle = glassCols[(i * 5 + y) % glassCols.length];
+      g.fillRect(x, y - h, 4, h); g.fillRect(x + 1, y - h - 3, 2, 3);
+      g.fillStyle = 'rgba(255,255,255,0.4)'; g.fillRect(x, y - h, 1, h);
+    }
+  };
+  shelf(32, 74, 68); shelf(142, 184, 68); shelf(32, 74, 92); shelf(142, 184, 92); shelf(32, 184, 116);
+  g.drawImage(pixToCanvas(props.bartender), 96, 121);
+  gradient(g, 16, 150, 180, 58, [[0, '#a06a3a'], [1, '#5a3418']], 4);
+  for (let x = 24; x < 190; x += 28) { g.fillStyle = W.dark; g.fillRect(x, 158, 22, 1); g.fillRect(x, 158, 1, 34); g.fillStyle = W.lit; g.fillRect(x + 21, 159, 1, 34); g.fillRect(x + 1, 192, 21, 1); }
+  g.fillStyle = W.lit; g.fillRect(12, 146, 188, 4);
+  g.fillStyle = W.pale; g.fillRect(12, 146, 188, 1);
+  g.fillStyle = W.dark; g.fillRect(12, 150, 188, 1);
+  g.fillStyle = '#d8a030'; g.fillRect(16, 197, 180, 2); // brass foot rail
+  g.drawImage(pixToCanvas(props.bottle), 60, 136);
+  g.fillStyle = '#cfe8f4'; g.fillRect(70, 141, 4, 5); g.fillRect(150, 141, 4, 5); g.fillRect(156, 140, 4, 6);
+  for (const sx of [44, 128, 172]) { // stools
+    g.fillStyle = '#2a1810'; g.fillRect(sx + 3, 181, 2, 27); g.fillRect(sx - 1, 198, 10, 1);
+    g.fillStyle = '#8c2330'; g.fillRect(sx - 3, 176, 14, 5);
+    g.fillStyle = '#d04a4a'; g.fillRect(sx - 3, 176, 14, 1);
+  }
+
+  // --- dartboard and a wanted poster
+  g.fillStyle = W.dark; g.fillRect(216, 72, 38, 38);
+  g.fillStyle = W.mid; g.fillRect(218, 74, 34, 34);
+  dartboard(g, 235, 91, 14);
+  g.fillStyle = '#e8dcc0'; g.fillRect(238, 84, 4, 1); g.fillRect(227, 96, 1, 4); // darts
+  g.fillStyle = PAL.r; g.fillRect(242, 83, 2, 3); g.fillRect(226, 100, 3, 2);
+  g.fillStyle = '#e8dcc0'; g.fillRect(266, 56, 40, 46);
+  g.fillStyle = '#b8a888'; g.fillRect(266, 100, 40, 2); g.fillRect(304, 56, 2, 46);
+  drawText(g, 'WANTED', 286, 59, { align: 'center', color: '#5a2e1a', shadow: null });
+  fillCircle(g, 286, 80, 6, '#cf8a5e');
+  g.fillStyle = '#3a2012'; g.fillRect(277, 73, 18, 2); g.fillRect(281, 68, 10, 5); g.fillRect(281, 82, 10, 2);
+  drawText(g, '500', 286, 91, { align: 'center', color: '#5a2e1a', shadow: null });
+
+  // --- the poker game, under a hanging lamp
+  g.fillStyle = '#2a1810'; g.fillRect(396, 0, 1, 56);
+  g.fillStyle = '#2f6a40'; g.fillRect(387, 54, 20, 4); g.fillRect(383, 58, 28, 4);
+  g.fillStyle = '#fff3b0'; g.fillRect(392, 62, 10, 2);
+  for (let y = 64; y < 168; y += 2) { // cone of lamplight
+    const half = 8 + (y - 64) * 0.55;
+    g.fillStyle = 'rgba(255,224,150,0.045)';
+    g.fillRect(397 - half, y, half * 2, 2);
+  }
+  g.drawImage(pixToCanvas(props.players[2]), 386, 138);
+  g.drawImage(pixToCanvas(props.players[0]), 334, 146);
+  g.drawImage(pixToCanvas(props.players[1]), 438, 146);
+  for (let dy = -7; dy <= 7; dy++) { // round table with a green baize top
+    const hw = Math.round(54 * Math.sqrt(1 - (dy / 7.5) ** 2));
+    g.fillStyle = dy > 4 ? W.shade : dy < -5 ? '#3a8a52' : '#2f7444';
+    g.fillRect(397 - hw, 171 + dy, hw * 2, 1);
+  }
+  g.fillStyle = W.shade; g.fillRect(349, 178, 96, 5);
+  g.fillStyle = W.dark; g.fillRect(349, 183, 96, 1); g.fillRect(391, 184, 12, 18); g.fillRect(377, 202, 40, 6);
+  for (const [x, y] of [[372, 168], [380, 172], [408, 167], [418, 171], [392, 170]]) { g.fillStyle = '#fbf5ef'; g.fillRect(x, y, 4, 3); g.fillStyle = PAL.r; g.fillRect(x + 1, y + 1, 1, 1); }
+  for (const [x, y, col] of [[398, 166, '#d0402f'], [402, 166, '#3a6ea5'], [400, 173, '#ffd75e'], [364, 172, '#d0402f'], [428, 168, '#ffd75e']]) { g.fillStyle = col; g.fillRect(x, y, 3, 1); g.fillRect(x, y - 2, 3, 1); g.fillStyle = '#fbf5ef'; g.fillRect(x, y - 1, 3, 1); }
+  g.drawImage(pixToCanvas(props.bottle), 412, 159);
+
+  g.fillStyle = 'rgba(26,10,18,0.34)'; // push the wall back so the action reads in front of it
+  g.fillRect(0, 0, BG_W, VIEW_H);
+  return c;
+}
+
+// Closer to the camera: ceiling beams, support posts and wagon-wheel chandeliers.
+function bakeSaloonNear() {
+  const c = makeCanvas(BG_W, VIEW_H), g = c.getContext('2d');
+  g.fillStyle = '#241408'; g.fillRect(0, 0, BG_W, 12);
+  g.fillStyle = '#5a3418'; g.fillRect(0, 11, BG_W, 1);
+  for (let x = 0; x < BG_W; x += 64) { g.fillStyle = '#241408'; g.fillRect(x + 20, 12, 7, 4); }
+  for (const x of [60, 316]) { // posts
+    gradient(g, x, 12, 7, 196, [[0, '#5a3418'], [1, '#3a2012']], 6);
+    g.fillStyle = '#8a5a30'; g.fillRect(x, 12, 1, 196);
+    g.fillStyle = '#241408'; g.fillRect(x + 6, 12, 1, 196); g.fillRect(x - 2, 12, 11, 5); g.fillRect(x - 2, 200, 11, 8);
+  }
+  for (const x of [188, 444]) { // chandeliers
+    g.fillStyle = '#241408'; g.fillRect(x, 12, 1, 24);
+    g.fillStyle = 'rgba(255,224,150,0.10)'; g.fillRect(x - 34, 20, 69, 34);
+    g.fillStyle = 'rgba(255,224,150,0.12)'; g.fillRect(x - 24, 24, 49, 22);
+    g.fillStyle = '#5a3418'; g.fillRect(x - 21, 36, 43, 3);
+    g.fillStyle = '#8a5a30'; g.fillRect(x - 21, 36, 43, 1);
+    for (const dx of [-19, -7, 6, 18]) {
+      g.fillStyle = '#e8dcc0'; g.fillRect(x + dx, 30, 2, 6);
+      g.fillStyle = '#ffd75e'; g.fillRect(x + dx, 27, 2, 3);
+      g.fillStyle = '#fff3b0'; g.fillRect(x + dx, 28, 1, 1);
+    }
+  }
+  return c;
+}
+
+// The joke: every stretch of wall has a sign confirming you're still in it.
+const SALOON_SIGNS = ['STILL THE SALOON', 'YEP. MORE SALOON', "SALOON, CONT'D", 'ARE WE THERE YET?', 'SALOON: PART 5', 'KEEP WALKING', 'NEARLY THERE. MAYBE'];
+const WALL_SPEED = 0.6;
+
+function drawSaloonBackdrop(ctx, cam) {
+  drawLayer(ctx, bg.saloonWall, cam * WALL_SPEED);
+  const first = Math.floor((cam * WALL_SPEED - 200) / BG_W);
+  for (let i = Math.max(0, first); i <= first + 2; i++) {
+    const text = SALOON_SIGNS[i % SALOON_SIGNS.length];
+    const w = textWidth(text) + 12, x = Math.round(308 + i * BG_W - cam * WALL_SPEED), y = 22;
+    if (x + w < 0 || x > VIEW_W) continue;
+    ctx.fillStyle = '#241408'; ctx.fillRect(x - 1, y - 1, w + 2, 15);
+    gradient(ctx, x, y, w, 13, [[0, '#8a6a40'], [1, '#5e4428']], 4);
+    drawText(ctx, text, x + 6, y + 3, { color: '#d8c8a0', shadow: '#2a1810' });
+  }
+  drawLayer(ctx, bg.saloonNear, cam * 0.85);
+}
+
+function drawBackdrop(ctx, cam, time = 0, theme = 'desert') {
+  if (theme === 'saloon') { drawSaloonBackdrop(ctx, cam); return; }
   ctx.drawImage(bg.sky, 0, 0);
   drawLayer(ctx, bg.clouds, cam * 0.04 + time * 0.03, 8);
   drawLayer(ctx, bg.far, cam * 0.1);
@@ -151,19 +306,29 @@ function drawBackdrop(ctx, cam, time = 0) {
 }
 
 // ---- world -------------------------------------------------------------------------
-function drawTile(ctx, kind, top, c, r) {
-  const set = kind === 2 ? (top ? tiles.rockTop : tiles.rock) : top ? tiles.sandTop : tiles.sand;
+// Which baked tile each solid kind uses, per theme: [buried, exposed top].
+const TILESET = {
+  desert: { 1: ['sand', 'sandTop'], 2: ['rock', 'rockTop'], 3: ['rock', 'rockTop'] },
+  saloon: { 1: ['floor', 'floorTop'], 2: ['crate', 'crateTop'], 3: ['ledge', 'ledge'] },
+};
+const PIT_COLOURS = {
+  desert: [[0, '#6a3a3c'], [0.35, '#3a1c30'], [1, '#150a1a']],
+  saloon: [[0, '#3a2418'], [0.3, '#1c100c'], [1, '#080406']], // the cellar
+};
+
+function drawTile(ctx, kind, top, c, r, theme = 'desert') {
+  const set = tiles[TILESET[theme][kind][top ? 1 : 0]];
   ctx.drawImage(set[(c * 7 + r * 13) & 1], c * TILE, r * TILE);
 }
 
 // found: whether the secret cave has been discovered. Until then its cells
 // are drawn (and shaded) exactly like the rock around them.
-function drawTiles(ctx, L, cam, found) {
+function drawTiles(ctx, L, cam, found, theme) {
   const solid = (c, r) => tileAt(L, c, r, !found);
   for (const pit of L.pits) {
     const x = pit.col0 * TILE, w = (pit.col1 - pit.col0 + 1) * TILE, y = pit.topRow * TILE;
     if (x + w < cam || x > cam + VIEW_W) continue;
-    gradient(ctx, x, y, w, VIEW_H - y, [[0, '#6a3a3c'], [0.35, '#3a1c30'], [1, '#150a1a']]);
+    gradient(ctx, x, y, w, VIEW_H - y, PIT_COLOURS[theme]);
   }
   const c0 = Math.max(0, Math.floor(cam / TILE)), c1 = Math.min(L.w - 1, Math.floor((cam + VIEW_W) / TILE));
   for (let c = c0; c <= c1; c++) {
@@ -176,7 +341,7 @@ function drawTiles(ctx, L, cam, found) {
         }
         continue;
       }
-      drawTile(ctx, kind, !solid(c, r - 1), c, r);
+      drawTile(ctx, kind, !solid(c, r - 1), c, r, theme);
       // exposed sides: sunlit on the left, in shadow on the right
       if (c > 0 && !solid(c - 1, r)) { ctx.fillStyle = 'rgba(255,240,200,0.3)'; ctx.fillRect(c * TILE, r * TILE, 1, TILE); }
       if (c < L.w - 1 && !solid(c + 1, r)) { ctx.fillStyle = 'rgba(40,10,20,0.3)'; ctx.fillRect(c * TILE + TILE - 2, r * TILE, 2, TILE); }
@@ -265,6 +430,17 @@ function enemySprite(e) {
   switch (e.type) {
     case 'scorpion': return alt ? S.scorpionB : S.scorpionA;
     case 'bandit': return alt && Math.abs(e.vx) > 0.05 ? S.banditB : S.banditA;
+    case 'rat': return alt ? S.ratB : S.ratA;
+    case 'madam': return e.state === 'aim' ? S.madamB : S.madamA;
+    case 'boss':
+      switch (e.state) {
+        case 'windup': return S.frankWindup;
+        case 'charge': return S.frankCharge;
+        case 'dizzy': case 'dead': return S.frankDizzy;
+        case 'throw': return e.t % 24 < 14 ? S.frankThrow : S.frankStandA;
+        case 'hop': return S.frankHop;
+        default: return (e.anim >> 4) & 1 && Math.abs(e.vx) > 0.05 ? S.frankStandB : S.frankStandA;
+      }
     default:
       if (e.state === 'leap') return S.chupaLeap;
       return alt && Math.abs(e.vx) > 0.05 ? S.chupaB : S.chupaA;
@@ -274,14 +450,44 @@ function enemySprite(e) {
 function drawEnemy(ctx, e) {
   const spr = enemySprite(e);
   const w = spr.w - spr.pad * 2, h = spr.h - spr.pad * 2;
-  const x = e.x + e.w / 2 - w / 2;
+  let x = e.x + e.w / 2 - w / 2;
   let y = e.y + e.h - h;
+  let flash = e.flash > 0;
   if (e.state === 'crouch') y += 2; // winding up to pounce
+  if (e.type === 'boss') {
+    if (e.state === 'stagger') x += Math.round(Math.sin(e.anim / 7) * 2); // drunken sway
+    if (e.state === 'windup') x += (e.anim & 2) - 1; // shaking with rage
+    if (e.state === 'dead') { y += Math.min(12, e.t * 0.08); flash = e.t < 150 && (e.t >> 2) & 1; } // flickers, then lies still
+  }
   if (e.onGround) drawShadow(ctx, e.x + e.w / 2, e.y + e.h, e.w + 4);
-  drawSprite(ctx, spr, x, y, e.face < 0, e.flash > 0);
-  if (e.state === 'aim' || e.state === 'crouch') {
+  drawSprite(ctx, spr, x, y, e.face < 0, flash);
+  if (e.state === 'aim' || e.state === 'crouch' || e.state === 'windup') {
     drawText(ctx, '!', e.x + e.w / 2 + 1, e.y - 16, { color: PAL.r, align: 'center' });
   }
+  if (e.state === 'dizzy') { // stars circling his head
+    for (let i = 0; i < 3; i++) {
+      const a = e.anim / 6 + (i * Math.PI * 2) / 3;
+      const sx = Math.round(e.x + e.w / 2 + Math.cos(a) * 16), sy = Math.round(e.y - 12 + Math.sin(a) * 4);
+      ctx.fillStyle = PAL.y; ctx.fillRect(sx - 2, sy, 5, 1); ctx.fillRect(sx, sy - 2, 1, 5);
+      ctx.fillStyle = PAL.w; ctx.fillRect(sx, sy, 1, 1);
+    }
+  }
+}
+
+// Level 2 easter egg: a dartboard on a post instead of on the wall, with a
+// gold bullseye. Shoot it.
+function drawTarget(ctx, t, frame) {
+  const x = Math.round(t.cx);
+  gradient(ctx, x - 5, 12, 10, 196, [[0, '#96623a'], [1, '#6e4424']], 6);
+  ctx.fillStyle = '#c08850'; ctx.fillRect(x - 5, 12, 2, 196);
+  ctx.fillStyle = '#3a2012'; ctx.fillRect(x + 4, 12, 1, 196); ctx.fillRect(x - 7, 12, 14, 4); ctx.fillRect(x - 7, 202, 14, 6);
+  if (t.hit) { // split clean in two
+    dartboard(ctx, x, t.cy, 9, '#2a1810');
+    ctx.fillStyle = '#6e4424'; ctx.fillRect(x - 1, t.cy - 9, 3, 19);
+    return;
+  }
+  dartboard(ctx, x, t.cy, 9, RAMP.gold[2]);
+  if ((frame >> 3) % 8 === 0) { ctx.fillStyle = PAL.w; ctx.fillRect(x - 3, t.cy, 7, 1); ctx.fillRect(x, t.cy - 3, 1, 7); } // glint
 }
 
 function drawPlayer(ctx, w) {
@@ -353,7 +559,7 @@ function drawParticle(ctx, q) {
 export function drawWorld(ctx, w) {
   const L = w.level;
   const cam = Math.round(w.camX);
-  drawBackdrop(ctx, cam, w.frame);
+  drawBackdrop(ctx, cam, w.frame, w.theme);
 
   ctx.save();
   if (w.shake > 0) {
@@ -363,13 +569,14 @@ export function drawWorld(ctx, w) {
   ctx.translate(-cam, 0);
   const visible = (x, margin = 48) => x > cam - margin && x < cam + VIEW_W + margin;
 
-  drawTiles(ctx, L, cam, w.secretFound);
+  drawTiles(ctx, L, cam, w.secretFound, w.theme);
+  if (w.target && visible(w.target.cx)) drawTarget(ctx, w.target, w.frame);
   if (w.goal && visible(w.goal.cx, 80)) drawSaloon(ctx, w.goal, w.frame);
   for (const cp of w.checkpoints) if (visible(cp.x)) drawCheckpoint(ctx, cp, w.frame);
   for (const hz of w.hazards) {
     if (!visible(hz.cx)) continue;
     drawShadow(ctx, hz.cx, hz.by, 16);
-    drawSprite(ctx, S.cactus, hz.cx - 11, hz.by - 34);
+    drawSprite(ctx, w.theme === 'saloon' ? S.cactusPot : S.cactus, hz.cx - 11, hz.by - 34);
   }
   for (const k of w.pickups) {
     if (!visible(k.x) || (k.type === 'chili' && !w.secretFound)) continue;
@@ -383,8 +590,24 @@ export function drawWorld(ctx, w) {
     if (((w.frame + k.phase) >> 3) % 6 === 0) { ctx.fillStyle = PAL.w; ctx.fillRect(k.x + 9, k.y + bob - 1, 1, 3); ctx.fillRect(k.x + 8, k.y + bob, 3, 1); }
   }
   for (const e of w.enemies) if (visible(e.x)) drawEnemy(ctx, e);
-  for (const b of w.ebullets) { // glowing red slug
+  for (const b of w.ebullets) {
     const x = Math.round(b.x), y = Math.round(b.y);
+    if (b.type === 'bottle') { // tumbling through the air
+      ctx.save();
+      ctx.translate(x + 3, y + 3);
+      ctx.rotate(b.spin + Math.floor(w.frame / 3) * 0.9 * Math.sign(b.vx || 1));
+      ctx.drawImage(S.bottle.c, -S.bottle.w / 2, -S.bottle.h / 2);
+      ctx.restore();
+      continue;
+    }
+    if (b.type === 'shock') { // shockwave rolling along the floorboards
+      const tall = (w.frame >> 2) & 1;
+      ctx.fillStyle = 'rgba(255,240,200,0.5)'; ctx.fillRect(x - 3, y + 4, b.w + 6, 4);
+      ctx.fillStyle = '#f2d79a'; ctx.fillRect(x, y + 2 - tall * 2, b.w, 6 + tall * 2);
+      ctx.fillStyle = PAL.w; ctx.fillRect(x + 2, y - tall * 3, b.w - 4, 4);
+      continue;
+    }
+    // glowing red slug
     ctx.globalAlpha = 0.35; fillCircle(ctx, x + 2, y + 2, 5, PAL.r); ctx.globalAlpha = 1;
     fillCircle(ctx, x + 2, y + 2, 3, PAL.k);
     fillCircle(ctx, x + 2, y + 2, 2, PAL.r);
@@ -410,6 +633,35 @@ export function drawWorld(ctx, w) {
 
   const blast = w.blasts.find((b) => !b.mini); // brief green flash over the whole screen
   if (blast && blast.t < 6) { ctx.fillStyle = `rgba(205,240,106,${0.3 - blast.t * 0.05})`; ctx.fillRect(0, 0, VIEW_W, VIEW_H); }
+
+  if (w.dialog) drawDialog(ctx, w.dialog, w.frame);
+  else if (w.state === 'play' && w.time < 150 && (w.time < 120 || (w.time >> 2) & 1)) { // level title card
+    drawLogo(ctx, `LEVEL ${w.levelIndex + 1}`, VIEW_W / 2, 66, 2);
+    drawText(ctx, w.levelName, VIEW_W / 2, 90, { align: 'center', color: PAL.w });
+  }
+}
+
+// Splits text into lines of at most `width` characters, breaking at spaces.
+function wrapText(text, width) {
+  const lines = [''];
+  for (const word of text.split(' ')) {
+    const cur = lines[lines.length - 1];
+    if (cur && cur.length + 1 + word.length > width) lines.push(word);
+    else lines[lines.length - 1] = cur ? `${cur} ${word}` : word;
+  }
+  return lines;
+}
+
+// Speech box; the line types itself out.
+function drawDialog(ctx, d, frame) {
+  panel(ctx, 14, 62, 228, 54); // below the HUD
+  drawText(ctx, `${d.who}:`, 22, 69, { color: PAL.y });
+  let left = Math.floor(d.t / DIALOG_SPEED);
+  wrapText(d.text, 35).forEach((line, i) => {
+    drawText(ctx, line.slice(0, Math.max(0, left)), 22, 83 + i * 11);
+    left -= line.length + 1;
+  });
+  if (left >= 0 && (frame >> 3) & 1) drawText(ctx, '~', 230, 104, { color: PAL.y });
 }
 
 // ---- HUD and screens ---------------------------------------------------------------
@@ -441,6 +693,16 @@ export function drawHUD(ctx, w, muted) {
     ctx.fillStyle = PAL.k; ctx.fillRect(VIEW_W / 2 - 42, 16, 84, 7);
     ctx.fillStyle = PAL.d; ctx.fillRect(VIEW_W / 2 - 41, 17, 82, 5);
     gradient(ctx, VIEW_W / 2 - 41, 17, Math.ceil((82 * p.turbo) / TURBO_FRAMES), 5, [[0, '#f0ffc0'], [1, PAL.F]], 1);
+  }
+
+  const boss = w.boss;
+  if (boss && w.arena.locked && !w.dialog && boss.state !== 'dead') { // Big Frank's health
+    drawText(ctx, BOSS_NAME, VIEW_W / 2, 213, { align: 'center', color: PAL.y });
+    ctx.fillStyle = PAL.k; ctx.fillRect(47, 223, 162, 9);
+    ctx.fillStyle = PAL.d; ctx.fillRect(48, 224, 160, 7);
+    const wBar = Math.ceil((160 * boss.hp) / ENEMY.boss.hp);
+    if (boss.flash > 0) { ctx.fillStyle = PAL.w; ctx.fillRect(48, 224, wBar, 7); }
+    else gradient(ctx, 48, 224, wBar, 7, [[0, '#f4705a'], [1, '#a8242c']], 2);
   }
 
   drawText(ctx, 'SCORE', VIEW_W - 6, 6, { align: 'right', color: PAL.y });
@@ -535,8 +797,9 @@ export function drawGameOver(ctx, w, best, tick) {
 
 export function drawWin(ctx, w, madeTheBoard, tick) {
   dim(ctx);
-  drawLogo(ctx, 'LEVEL COMPLETE', VIEW_W / 2, 40, 2);
-  drawText(ctx, 'THE SALOON IS SAFE. FOR NOW.', VIEW_W / 2, 64, { align: 'center', color: PAL.f });
+  const last = w.lastLevel;
+  drawLogo(ctx, last ? 'YOU WIN!' : 'LEVEL COMPLETE', VIEW_W / 2, last ? 34 : 40, last ? 3 : 2);
+  drawText(ctx, last ? 'BIG FRANK IS OUT COLD.' : 'NEXT STOP: THE SALOON.', VIEW_W / 2, 64, { align: 'center', color: PAL.f });
   const b = w.bonus;
   const mm = Math.floor(b.seconds / 60), ss = String(b.seconds % 60).padStart(2, '0');
   const lines = [
@@ -552,8 +815,8 @@ export function drawWin(ctx, w, madeTheBoard, tick) {
     drawText(ctx, label, 48, y, { color });
     drawText(ctx, value, VIEW_W - 48, y, { color, align: 'right' });
   });
-  if (madeTheBoard) drawText(ctx, 'YOU MADE THE HI SCORE BOARD!', VIEW_W / 2, 158, { align: 'center', color: (tick >> 3) & 1 ? PAL.r : PAL.y });
-  if ((tick >> 4) & 1) drawText(ctx, 'PRESS ENTER', VIEW_W / 2, 180, { align: 'center' });
+  if (last && madeTheBoard) drawText(ctx, 'YOU MADE THE HI SCORE BOARD!', VIEW_W / 2, 158, { align: 'center', color: (tick >> 3) & 1 ? PAL.r : PAL.y });
+  if ((tick >> 4) & 1) drawText(ctx, last ? 'PRESS ENTER' : `PRESS ENTER FOR LEVEL ${w.levelIndex + 2}`, VIEW_W / 2, 180, { align: 'center' });
 }
 
 // Arcade-style initials entry. entry = { chars: ['A','A','A'], pos, busy }.

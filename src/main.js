@@ -54,8 +54,9 @@ function go(next) {
   screenT = 0;
 }
 
-function startGame() {
-  world = createWorld();
+// carry: { score, hp, farts } brought over from the level before.
+function startGame(levelIndex = 0, carry = null) {
+  world = createWorld({ levelIndex, carry });
   go('play');
   input.releaseAll();
   audio.play('start');
@@ -227,7 +228,9 @@ function step() {
       world.events.length = 0;
       if (screenT > 45 && (inp.ui.confirm || inp.ui.click || inp.pausePressed)) {
         // Reaching the saloon with a good enough score earns a spot on the board.
-        if (screen === 'won' && scores.qualifies(world.score)) {
+        if (screen === 'won' && !world.lastLevel) { // on to the next level, keeping score, hearts and beans
+          startGame(world.levelIndex + 1, { score: world.score, hp: world.player.hp, farts: world.player.farts });
+        } else if (screen === 'won' && scores.qualifies(world.score)) {
           Object.assign(entry, { pos: 0, busy: false });
           go('initials');
         } else if (screen === 'won') openScores();
@@ -278,7 +281,7 @@ function makeDebug() {
     Object.assign(entry, { chars: ['R', 'U', 'D'], pos: 1 });
     screen = 'initials';
   } else if (mode !== 'title') {
-    world = createWorld();
+    world = createWorld({ levelIndex: (Number(q.get('level')) || 1) - 1 }); // &level=2 starts in the saloon
     screen = 'play';
     const col = Number(q.get('col'));
     if (col) {
@@ -293,7 +296,9 @@ function makeDebug() {
     if (q.get('found')) world.secretFound = true;
     if (mode === 'pause') screen = 'pause';
     if (mode === 'gameover') { world.player.hp = 1; hurtPlayer(world, 0); }
-    if (mode === 'won') { world.player.x = world.goal.x - 30; world.camX = world.level.pxW - VIEW_W; hold.push('right'); }
+    if (mode === 'won' && world.goal) { world.player.x = world.goal.x - 30; world.camX = world.level.pxW - VIEW_W; hold.push('right'); }
+    if (q.get('bosshp')) world.boss.hp = Number(q.get('bosshp'));
+    if (q.get('time')) world.time = Number(q.get('time'));
   }
   return {
     input(inp) {

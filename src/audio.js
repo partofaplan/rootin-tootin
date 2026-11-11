@@ -83,6 +83,14 @@ const SFX = {
   die() { stopMusic(); arp([523, 494, 466, 440, 349, 262, 196], 0.11, 0.16, 0.2); },
   win() { stopMusic(); arp([523, 659, 784, 1047, 784, 1047], 0.12, 0.2, 0.2); tone('triangle', 131, 131, 0.9, 0.3); },
   start() { tempo = 1; arp([392, 523, 659, 784], 0.06, 0.1, 0.15); },
+  stomp() { tone('square', 180, 620, 0.1, 0.2); noise(0.06, 0.25, 1200); },
+  throw() { tone('triangle', 500, 900, 0.12, 0.1); },
+  smash() { noise(0.16, 0.3, 7000); tone('square', 2400, 900, 0.06, 0.08); tone('square', 1800, 3000, 0.05, 0.06, 0.03); },
+  slam() { tone('sine', 110, 30, 0.35, 0.6); noise(0.25, 0.4, 300); },
+  bossIntro() { stopMusic(); arp([196, 185, 175, 165, 147], 0.16, 0.3, 0.2, 'sawtooth'); },
+  boss() { startMusic(); tempo = 1.2; }, // the fight: same tune, faster
+  bossRoar() { tone('sawtooth', 90, 140, 0.3, 0.3); noise(0.25, 0.2, 500); },
+  bossDown() { stopMusic(); arp([330, 294, 262, 220, 196, 147, 110], 0.12, 0.2, 0.22, 'sawtooth'); noise(0.5, 0.3, 400); },
   secret() { arp([659, 622, 587, 494, 523, 659, 784, 1047], 0.07, 0.1, 0.16, 'triangle'); },
   toot() { const f = 110 + Math.random() * 70; tone('sawtooth', f, f * 0.55, 0.11, 0.22); noise(0.07, 0.18, 400); },
   turbo() { tempo = 1.4; arp([392, 494, 587, 784, 988, 1175], 0.05, 0.12, 0.18); }, // the music speeds up too

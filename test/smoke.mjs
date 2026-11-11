@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict';
 import { buildSprites, buildTiles, FONT } from '../src/sprites.js';
 import {
-  LEVEL_ROWS, ROWS, TILE, SOLID_CHARS, SPAWN_CHARS, SECRET_CHARS, parseLevel, surfaceRow, tileAt, secretAt, rectSolid,
+  LEVELS, LEVEL_ROWS, ROWS, TILE, SOLID_CHARS, SPAWN_CHARS, SECRET_CHARS, ARENA_COLS, parseLevel, surfaceRow, tileAt, secretAt, rectSolid,
 } from '../src/level.js';
 import {
   createWorld, updateWorld, makeEnemy, NO_INPUT, PHYS, CLIP, RELOAD_FRAMES, MAX_HP, TURBO_FRAMES, TURBO_RATE, FART_RADIUS,
+  ENEMY, BOSS_INTRO, BOSS_NAME, DIALOG_SPEED, VIEW_W,
 } from '../src/game.js';
 import {
   createInput, normalizeBindings, bindingName, ACTIONS, SLOTS, DEFAULT_BINDINGS, STORAGE_KEY,
@@ -95,46 +96,62 @@ test('font glyphs are 5x7', () => {
   for (const ch of "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 '!") assert.ok(ch in FONT, `missing glyph '${ch}'`);
 });
 
-test('level rows are well formed', () => {
-  assert.equal(LEVEL_ROWS.length, ROWS);
-  const count = {};
-  for (const row of LEVEL_ROWS) {
-    assert.equal(row.length, LEVEL_ROWS[0].length);
-    for (const ch of row) {
-      assert.ok(ch === '.' || ch in SOLID_CHARS || SPAWN_CHARS.includes(ch) || SECRET_CHARS.includes(ch), `unknown map char '${ch}'`);
-      count[ch] = (count[ch] || 0) + 1;
+test('every level is well formed', () => {
+  assert.equal(LEVELS.length, 2);
+  assert.deepEqual(LEVELS.map((l) => l.theme), ['desert', 'saloon']);
+  LEVELS.forEach((def, i) => {
+    assert.equal(def.rows.length, ROWS);
+    const count = {};
+    for (const row of def.rows) {
+      assert.equal(row.length, def.rows[0].length);
+      for (const ch of row) {
+        assert.ok(ch === '.' || ch in SOLID_CHARS || SPAWN_CHARS.includes(ch) || SECRET_CHARS.includes(ch), `level ${i + 1}: unknown map char '${ch}'`);
+        count[ch] = (count[ch] || 0) + 1;
+      }
     }
-  }
-  assert.equal(count.P, 1, 'exactly one player start');
-  assert.equal(count.G, 1, 'exactly one goal');
-  assert.equal(count.E, 1, 'exactly one easter egg');
-  assert.ok(count.K >= 1, 'has a checkpoint');
-  for (const ch of 'sbcB') assert.ok(count[ch] >= 3, `has several '${ch}'`);
-  assert.ok(LEVEL_ROWS[0].length >= 200, 'level is long enough');
+    assert.equal(count.P, 1, 'exactly one player start');
+    assert.ok(count.K >= 1, 'has a checkpoint');
+    assert.ok(count.B >= 3, 'has bean cans');
+    assert.ok(def.rows[0].length >= 180, 'level is long enough');
+    assert.equal((count.E || 0) + (count.D || 0), 1, 'exactly one easter egg');
+    assert.equal((count.G || 0) + (count.F || 0), 1, 'ends in a goal door or a boss');
+  });
+  const desert = LEVELS[0].rows.join(''), saloon = LEVELS[1].rows.join('');
+  for (const ch of 'sbcGE') assert.ok(desert.includes(ch), `desert has '${ch}'`);
+  // The saloon has its own cast: rats, bandits and the madam, and Big Frank at the end.
+  for (const ch of 'rbmFD') assert.ok(saloon.includes(ch), `saloon has '${ch}'`);
+  for (const ch of 'scG') assert.ok(!saloon.includes(ch), `saloon has no '${ch}'`);
+  assert.ok((saloon.match(/r/g) || []).length >= 6 && (saloon.match(/m/g) || []).length >= 3 && (saloon.match(/b/g) || []).length >= 3);
 });
 
-test('pits and ledges are jumpable', () => {
-  const L = parseLevel();
+test('pits and ledges are jumpable in every level', () => {
   // Max flat jump distance in pixels, and max rise in tiles.
   const airFrames = (2 * -PHYS.JUMP) / PHYS.G;
   const maxGapTiles = Math.floor((airFrames * PHYS.RUN) / TILE);
   const maxRise = Math.floor((PHYS.JUMP ** 2 / (2 * PHYS.G)) / TILE);
-  let gap = 0;
-  for (let c = 0; c < L.w; c++) {
-    let any = false;
-    for (let r = 0; r < L.h; r++) any = any || !!tileAt(L, c, r);
-    gap = any ? 0 : gap + 1;
-    assert.ok(gap <= maxGapTiles, `gap of ${gap} tiles ending at col ${c} is too wide`);
+  for (const def of LEVELS) {
+    const L = parseLevel(def.rows);
+    let gap = 0;
+    for (let c = 0; c < L.w; c++) {
+      let any = false;
+      for (let r = 0; r < L.h; r++) any = any || !!tileAt(L, c, r);
+      gap = any ? 0 : gap + 1;
+      assert.ok(gap <= maxGapTiles, `${def.name}: gap of ${gap} tiles ending at col ${c} is too wide`);
+    }
+    for (let c = 0; c + 1 < L.w; c++) {
+      const a = surfaceRow(L, c), b = surfaceRow(L, c + 1);
+      if (a < L.h && b < L.h) assert.ok(a - b <= maxRise, `${def.name}: step up of ${a - b} tiles at col ${c + 1}`);
+    }
+    // Every spawn sits in open space directly above something solid (pickups and the dartboard may float).
+    for (const s of L.spawns) {
+      if ('BHD'.includes(s.type)) continue;
+      assert.ok(tileAt(L, s.col, s.row + 1), `${def.name}: '${s.type}' at col ${s.col} is floating`);
+    }
   }
-  for (let c = 0; c + 1 < L.w; c++) {
-    const a = surfaceRow(L, c), b = surfaceRow(L, c + 1);
-    if (a < L.h && b < L.h) assert.ok(a - b <= maxRise, `step up of ${a - b} tiles at col ${c + 1}`);
-  }
-  // Every spawn sits in open space directly above something solid.
-  for (const s of L.spawns) {
-    if ('BH'.includes(s.type)) continue;
-    assert.ok(tileAt(L, s.col, s.row + 1), `'${s.type}' at col ${s.col} is floating`);
-  }
+  // Big Frank's room is one flat screen at the very end.
+  const L = parseLevel(LEVELS[1].rows);
+  assert.equal(ARENA_COLS * TILE, VIEW_W);
+  for (let c = L.w - ARENA_COLS; c < L.w; c++) assert.equal(surfaceRow(L, c), L.h - 2, 'arena floor is flat');
 });
 
 // ---- mechanics -----------------------------------------------------------------
@@ -254,6 +271,199 @@ test('touching the saloon door wins the level', () => {
   assert.equal(w.state, 'won');
   assert.equal(w.bonus.hearts, MAX_HP * 500);
   assert.equal(w.score, w.bonus.time + w.bonus.hearts);
+});
+
+// ---- stomping --------------------------------------------------------------------------
+test('jumping on an enemy kills it and bounces Rudy; touching it otherwise still hurts', () => {
+  for (const type of ['scorpion', 'bandit', 'chupacabra', 'rat', 'madam']) {
+    const w = emptyWorld();
+    const p = w.player;
+    const e = place(w, type, 0);
+    e.cd = 999; // keep it from attacking during the test
+    p.y = e.y - p.h - 14; p.vy = 1; p.onGround = false;
+    let stomped = false;
+    for (let i = 0; i < 30 && !stomped; i++) { updateWorld(w, input({ jump: i > 3 })); stomped = w.events.includes('stomp'); w.events.length = 0; }
+    assert.ok(stomped, `${type} was stomped`);
+    assert.ok(!w.enemies.includes(e), `${type} is gone`);
+    assert.equal(p.hp, MAX_HP, `${type} stomp costs nothing`);
+    assert.ok(p.vy < -3, 'Rudy bounces');
+    assert.equal(w.score, ENEMY[type].score);
+  }
+  // Holding jump gives a higher bounce.
+  const bounce = (held) => {
+    const w = emptyWorld(), p = w.player, e = place(w, 'rat', 0);
+    e.vx = 0;
+    p.y = e.y - p.h - 6; p.vy = 2; p.onGround = false;
+    for (let i = 0; i < 10 && w.enemies.length; i++) updateWorld(w, input({ jump: held }));
+    return p.vy;
+  };
+  assert.ok(bounce(true) < bounce(false));
+  // Walking into one is still a hit.
+  const w = emptyWorld();
+  place(w, 'rat', 8);
+  run(w, 3);
+  assert.equal(w.player.hp, MAX_HP - 1);
+});
+
+// ---- the saloon --------------------------------------------------------------------------
+const saloon = (opts = {}) => {
+  const w = createWorld({ levelIndex: 1, ...opts });
+  run(w, 5);
+  return w;
+};
+
+test('level 2 is the saloon and carries Rudy over from level 1', () => {
+  const w = saloon({ carry: { score: 4321, hp: 2, farts: 3 } });
+  assert.equal(w.theme, 'saloon');
+  assert.equal(w.levelName, 'THE ENDLESS SALOON');
+  assert.equal(w.lastLevel, true);
+  assert.equal(createWorld().lastLevel, false);
+  assert.deepEqual([w.score, w.player.hp, w.player.farts], [4321, 2, 3]);
+  assert.equal(w.goal, null);
+  const types = new Set(w.enemies.map((e) => e.type));
+  assert.deepEqual([...types].sort(), ['bandit', 'boss', 'madam', 'rat']);
+  assert.equal(w.boss.state, 'wait');
+});
+
+test('rats rush Rudy; the madam lobs bottles that arc down onto him', () => {
+  const w = emptyWorld();
+  const p = w.player;
+  const rat = place(w, 'rat', 90);
+  rat.face = 1; // running away...
+  run(w, 5);
+  assert.equal(rat.face, -1, '...until it notices him');
+  assert.ok(Math.abs(rat.vx) > PHYS.RUN * 0.6, 'rats are quick');
+  w.enemies = [];
+
+  const m = place(w, 'madam', 120);
+  m.cd = 0;
+  let thrown = null, peak = Infinity, smashed = false;
+  for (let i = 0; i < 140; i++) {
+    updateWorld(w);
+    thrown = thrown || w.ebullets.find((b) => b.type === 'bottle');
+    if (thrown) peak = Math.min(peak, thrown.y);
+    smashed = smashed || w.events.includes('smash');
+    w.events.length = 0;
+  }
+  assert.ok(thrown, 'she threw a bottle');
+  assert.ok(peak < m.y - 10, 'it goes up and over');
+  assert.ok(smashed, 'and smashes');
+  assert.equal(p.hp, MAX_HP - 1, 'on Rudy, who stood still');
+  assert.equal(m.vx, 0, 'she stays put');
+});
+
+// Walks Rudy into Big Frank's room.
+function atBoss(opts) {
+  const w = saloon(opts);
+  const p = w.player;
+  p.x = w.arena.x0 + 30; p.y = (w.level.h - 2) * TILE - p.h; p.vx = 0; p.vy = 0;
+  updateWorld(w);
+  return w;
+}
+function skipDialog(w) {
+  for (let i = 0; i < 400 && w.dialog; i++) updateWorld(w, input({ jumpPressed: i % 15 === 0 }));
+  w.events.length = 0;
+}
+
+test('meeting Big Frank: his line, word for word, then the fight', () => {
+  assert.equal(BOSS_INTRO, 'YOU DONE IT NOW, RUDY! BIG FRANK IS GONNA MESS YOU UP!');
+  const w = atBoss();
+  const p = w.player, frank = w.boss;
+  assert.ok(w.arena.locked);
+  assert.deepEqual([w.dialog.who, w.dialog.text], [BOSS_NAME, BOSS_INTRO]);
+  assert.equal(frank.state, 'intro');
+  assert.ok(w.events.includes('bossIntro'));
+  // Nothing moves while he talks, and nothing can hurt.
+  const x = p.x, fx = frank.x, time = w.time;
+  run(w, 30, input({ right: true }));
+  assert.deepEqual([p.x, frank.x, w.time], [x, fx, time]);
+  // One press finishes the line, the next starts the fight.
+  updateWorld(w, input({ jumpPressed: true }));
+  assert.ok(w.dialog && w.dialog.t >= BOSS_INTRO.length * DIALOG_SPEED);
+  run(w, 12);
+  updateWorld(w, input({ jumpPressed: true }));
+  assert.equal(w.dialog, null);
+  assert.equal(frank.state, 'stagger');
+  // The camera settles on his room and Rudy can't walk back out.
+  run(w, 200, input({ left: true }));
+  assert.ok(Math.abs(w.camX - w.arena.x0) < 1);
+  assert.ok(p.x >= w.arena.x0);
+  // Left alone, the line also moves on by itself.
+  const w2 = atBoss();
+  run(w2, BOSS_INTRO.length * DIALOG_SPEED + 320);
+  assert.equal(w2.dialog, null);
+});
+
+test('Big Frank charges, throws bottles and belly-flops; beating him wins the game', () => {
+  const w = atBoss({ god: true });
+  const p = w.player, frank = w.boss;
+  skipDialog(w);
+  const seen = new Set();
+  let bottles = 0, shocks = 0;
+  for (let i = 0; i < 1500; i++) {
+    updateWorld(w);
+    seen.add(frank.state);
+    bottles += w.events.filter((e) => e === 'throw').length;
+    shocks = Math.max(shocks, w.ebullets.filter((b) => b.type === 'shock').length);
+    w.events.length = 0;
+    assert.ok(frank.x >= w.arena.x0 - 0.01 && frank.x + frank.w <= w.arena.x1 + 0.01, 'he stays in his room');
+  }
+  for (const st of ['stagger', 'windup', 'charge', 'dizzy', 'throw', 'hop']) assert.ok(seen.has(st), `saw him ${st}`);
+  assert.ok(bottles >= 3 && shocks === 2);
+  assert.equal(frank.hp, ENEMY.boss.hp, 'unharmed so far');
+
+  // Bullets chip away, a stomp does 3, a fart does 6, and he takes double when dizzy.
+  w.god = false;
+  p.inv = 0;
+  frank.state = 'stagger'; frank.t = 999; frank.x = p.x - 4; frank.y = p.y + p.h - frank.h + 0;
+  p.y = frank.y - p.h - 8; p.vy = 2; p.onGround = false;
+  for (let i = 0; i < 12 && frank.hp === ENEMY.boss.hp; i++) updateWorld(w);
+  assert.equal(frank.hp, ENEMY.boss.hp - 3, 'stomp');
+  assert.equal(p.hp, MAX_HP);
+  assert.ok(w.enemies.includes(frank), 'a stomp does not kill the boss');
+  w.god = true;
+  p.farts = 1;
+  updateWorld(w, input({ fartPressed: true }));
+  assert.equal(frank.hp, ENEMY.boss.hp - 9, 'fart');
+
+  // Finish him.
+  frank.hp = 2;
+  frank.state = 'dizzy'; frank.t = 999;
+  p.x = frank.x - 60; p.y = (w.level.h - 2) * TILE - p.h; p.vy = 0; p.face = 1;
+  const before = w.score;
+  for (let i = 0; i < 60 && frank.state !== 'dead'; i++) updateWorld(w, input({ shoot: true, right: i === 0 }));
+  assert.equal(frank.state, 'dead');
+  assert.equal(w.score, before + ENEMY.boss.score);
+  assert.ok(w.events.includes('bossDown'));
+  assert.equal(w.state, 'play');
+  run(w, 160);
+  assert.equal(w.state, 'won');
+  assert.ok(w.bonus && w.lastLevel);
+});
+
+test('the saloon easter egg: shoot the trick dartboard for the chili', () => {
+  const w = saloon();
+  const p = w.player, t = w.target;
+  assert.ok(t && !t.hit);
+  w.enemies = [];
+  p.x = t.cx - 70; p.y = (w.level.h - 2) * TILE - p.h; p.face = 1;
+  w.camX = t.cx - 128;
+  run(w, 3);
+  // From the ground the shot passes underneath.
+  updateWorld(w, input({ shoot: true }));
+  run(w, 40);
+  assert.equal(t.hit, false, 'too low from the floor');
+  // Jump and shoot.
+  updateWorld(w, input({ jump: true, jumpPressed: true }));
+  for (let i = 0; i < 60 && !t.hit; i++) updateWorld(w, input({ jump: true, shoot: true }));
+  assert.ok(t.hit, 'bullseye');
+  assert.ok(w.secretFound && w.events.includes('secret'));
+  const chili = w.pickups.find((k) => k.type === 'chili');
+  assert.ok(chili);
+  run(w, 60);
+  assert.equal(chili.y + chili.h, (w.level.h - 2) * TILE - 2, 'the chili drops to the floor');
+  for (let i = 0; i < 120 && p.turbo === 0; i++) updateWorld(w, input({ right: true }));
+  assert.ok(p.turbo > 0, 'and gives turbo');
 });
 
 // ---- easter egg ------------------------------------------------------------------------
@@ -644,6 +854,12 @@ test('the country tune is well formed', () => {
 // A simple bot: run right, shoot, jump at walls and gaps.
 function botInput(w, prev) {
   const p = w.player, L = w.level;
+  if (w.dialog) return input({ jumpPressed: w.frame % 20 === 0 });
+  if (w.boss && w.arena.locked) { // boss fight: face him and keep shooting, hopping now and then
+    const toward = w.boss.x + w.boss.w / 2 > p.x + p.w / 2 ? 1 : -1;
+    const hop = p.onGround && w.frame % 90 === 0;
+    return input({ right: toward > 0 && p.face < 0, left: toward < 0 && p.face > 0, shoot: true, jump: hop || !p.onGround, jumpPressed: hop });
+  }
   const footRow = Math.floor((p.y + p.h - 1) / TILE);
   const edgeCol = Math.floor((p.x + p.w + 1) / TILE);
   const wallCol = Math.floor((p.x + p.w + 10) / TILE);
@@ -655,8 +871,8 @@ function botInput(w, prev) {
   return input({ right: true, shoot: true, jump: wantJump || !p.onGround, jumpPressed: wantJump && !prev.jump });
 }
 
-test('level can be completed end to end (invulnerable bot)', () => {
-  const w = createWorld({ god: true });
+for (const levelIndex of [0, 1]) test(`level ${levelIndex + 1} can be completed end to end (invulnerable bot)`, () => {
+  const w = createWorld({ god: true, levelIndex });
   let inp = NO_INPUT, maxX = 0;
   for (let i = 0; i < 20000 && w.state === 'play'; i++) {
     inp = botInput(w, inp);
