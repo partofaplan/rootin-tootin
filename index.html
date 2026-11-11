@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rootin' Tootin'</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    body { display: flex; align-items: center; justify-content: center; }
+    canvas { display: block; image-rendering: crisp-edges; image-rendering: pixelated; }
+    #file-note { display: none; color: #f7d35c; font: 16px/1.5 monospace; padding: 24px; max-width: 520px; }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="256" height="240"></canvas>
+  <p id="file-note">
+    Rootin' Tootin' needs to be served over http. In the project folder run
+    <b>npm start</b>, then open <b>http://localhost:8000</b>.
+  </p>
+  <script>
+    // ES modules don't load from file:// URLs, so explain instead of showing a blank page.
+    if (location.protocol === 'file:') {
+      document.getElementById('game').style.display = 'none';
+      document.getElementById('file-note').style.display = 'block';
+    }
+  </script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "rootin-tootin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rootin' Tootin' - a retro sidescroller starring Rudy Tootin', the gassiest gun in the West.",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node test/smoke.mjs"
+  }
+}
