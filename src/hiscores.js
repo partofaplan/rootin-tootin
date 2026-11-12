@@ -1,6 +1,8 @@
 // Hi-score table: validation and ordering (shared by the browser and
 // server.js), plus the browser-side store that talks to the server.
 
+import { cleanMode } from './modes.js';
+
 export const MAX_SCORES = 10;
 export const NAME_LEN = 3;
 export const NAME_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -25,7 +27,7 @@ export function normalizeScores(raw) {
   const list = [];
   for (const e of raw) {
     const name = cleanName(e && e.name), score = cleanScore(e && e.score);
-    if (name && score !== null) list.push({ name, score, at: Number(e.at) || 0 });
+    if (name && score !== null) list.push({ name, score, at: Number(e.at) || 0, mode: cleanMode(e.mode) });
   }
   // Highest first; on a tie, whoever got there first stays ahead.
   list.sort((a, b) => b.score - a.score || a.at - b.at);
@@ -38,10 +40,11 @@ export function qualifies(list, score) {
 
 // Returns { list, rank }: a new list, and the new entry's index in it (-1 if
 // it didn't make the board or was invalid).
-export function addScore(list, rawName, rawScore, at = Date.now()) {
+// mode: which game mode the score was earned in ('normal' | 'speedrun'); shown on the board.
+export function addScore(list, rawName, rawScore, at = Date.now(), mode = 'normal') {
   const name = cleanName(rawName), score = cleanScore(rawScore);
   if (!name || score === null || !qualifies(list, score)) return { list, rank: -1 };
-  const entry = { name, score, at };
+  const entry = { name, score, at, mode: cleanMode(mode) };
   const next = normalizeScores([...list, entry]);
   return { list: next, rank: next.findIndex((e) => e.name === name && e.score === score && e.at === at) };
 }
@@ -77,7 +80,7 @@ export function createScoreStore({ fetchFn, storage, url = 'api/scores', timeout
   const post = (entry) => call({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: entry.name, score: entry.score }),
+    body: JSON.stringify({ name: entry.name, score: entry.score, mode: entry.mode }),
   });
   function adopt(serverScores) {
     list = normalizeScores(serverScores);
@@ -107,8 +110,8 @@ export function createScoreStore({ fetchFn, storage, url = 'api/scores', timeout
     },
 
     // Adds a score. Resolves to { rank, shared }; never rejects.
-    async submit(name, score) {
-      const local = addScore(list, name, score);
+    async submit(name, score, mode = 'normal') {
+      const local = addScore(list, name, score, Date.now(), mode);
       list = local.list;
       write(STORAGE_KEY, list);
       let rank = local.rank;

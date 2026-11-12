@@ -85,7 +85,8 @@ export function makeEnemy(type, cx, by) {
   };
 }
 
-// opts: { levelIndex, carry: { score, hp, farts } (from the previous level), god }
+// opts: { levelIndex, mode: 'normal' | 'speedrun', god,
+//         carry: { score, hp, farts, runTime } (from the previous level) }
 export function createWorld(opts = {}) {
   const levelIndex = opts.levelIndex || 0;
   const def = LEVELS[levelIndex];
@@ -99,7 +100,9 @@ export function createWorld(opts = {}) {
     state: 'play', // play | dying | gameover | won
     stateT: 0,
     frame: 0,
-    time: 0, // frames spent playing
+    mode: opts.mode === 'speedrun' ? 'speedrun' : 'normal',
+    runStart: 0, // frames already on the run clock when this level began
+    time: 0, // frames spent playing this level
     score: 0,
     kills: 0,
     bonus: null,
@@ -158,10 +161,14 @@ export function createWorld(opts = {}) {
     w.score = opts.carry.score;
     w.player.hp = opts.carry.hp;
     w.player.farts = opts.carry.farts;
+    w.runStart = opts.carry.runTime || 0;
   }
   w.camX = cameraTarget(w);
   return w;
 }
+
+// Play time for the whole run so far (all levels), in frames.
+export const runFrames = (w) => w.runStart + w.time;
 
 function cameraTarget(w) {
   const p = w.player;
@@ -546,7 +553,7 @@ function finishLevel(w) {
   const p = w.player;
   const time = Math.max(0, 3000 - Math.floor(w.time / 60) * 10);
   const hearts = p.hp * 500;
-  w.bonus = { time, hearts, kills: w.kills, seconds: Math.floor(w.time / 60) };
+  w.bonus = { time, hearts, kills: w.kills, seconds: Math.floor(w.time / 60), runFrames: runFrames(w) };
   w.score += time + hearts;
   w.state = 'won';
   w.stateT = 0;

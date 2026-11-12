@@ -3,11 +3,12 @@
 import { PAL, RAMP, buildSprites, buildTiles, buildProps, cloud } from './sprites.js';
 import { TILE, tileAt, secretAt } from './level.js';
 import {
-  VIEW_W, VIEW_H, MAX_HP, MAX_FARTS, CLIP, RELOAD_FRAMES, TURBO_FRAMES, ENEMY, BOSS_NAME, DIALOG_SPEED,
+  VIEW_W, VIEW_H, MAX_HP, MAX_FARTS, CLIP, RELOAD_FRAMES, TURBO_FRAMES, ENEMY, BOSS_NAME, DIALOG_SPEED, runFrames,
 } from './game.js';
 import { ACTIONS, SLOTS, bindingName } from './input.js';
 import { TITLE_MENU, PAUSE_MENU, CTL, CTL_RESET_ROW, CTL_BACK_ROW, INITIALS } from './ui.js';
 import { MAX_SCORES } from './hiscores.js';
+import { MODES, formatTime } from './modes.js';
 import {
   makeCanvas, pixToCanvas, bakeSprite, drawSprite, drawSpriteScaled, drawText, drawLogo, textWidth,
   fillCircle, fillRing, LOGO_GOLD, LOGO_GAS, LOGO_RED,
@@ -687,6 +688,9 @@ export function drawHUD(ctx, w, muted) {
 
   for (let i = 0; i < MAX_FARTS; i++) drawSprite(ctx, i < p.farts ? S.beans : S.beansEmpty, 6 + i * 15, 38);
 
+  if (w.mode === 'speedrun') { // the run clock (moves down while the turbo bar is showing)
+    drawText(ctx, formatTime(runFrames(w)), VIEW_W / 2, p.turbo > 0 ? 27 : 6, { align: 'center', color: PAL.w });
+  }
   if (p.turbo > 0) { // easter egg timer
     const flash = (w.frame >> 2) & 1;
     drawText(ctx, 'TURBO TOOT!', VIEW_W / 2, 6, { align: 'center', color: flash ? PAL.y : PAL.f });
@@ -792,14 +796,19 @@ export function drawGameOver(ctx, w, best, tick) {
   drawText(ctx, "RUDY'S RUN OUT OF GAS", VIEW_W / 2, 104, { align: 'center', color: PAL.f });
   drawText(ctx, `SCORE      ${pad6(w.score)}`, VIEW_W / 2, 126, { align: 'center' });
   drawText(ctx, `TOP SCORE  ${pad6(best)}`, VIEW_W / 2, 138, { align: 'center', color: PAL.y });
-  if ((tick >> 4) & 1) drawText(ctx, 'PRESS ENTER', VIEW_W / 2, 164, { align: 'center' });
+  // What happens next depends on the mode.
+  const again = w.mode === 'speedrun' ? 'ENTER: START OVER AT LEVEL 1' : `ENTER: RETRY LEVEL ${w.levelIndex + 1}`;
+  drawText(ctx, again, VIEW_W / 2, 162, { align: 'center', color: (tick >> 4) & 1 ? PAL.y : PAL.w });
+  drawText(ctx, 'ESC: QUIT TO TITLE', VIEW_W / 2, 176, { align: 'center', color: PAL.l });
+  drawText(ctx, MODES[w.mode].label, VIEW_W / 2, 196, { align: 'center', color: PAL.g });
 }
 
 export function drawWin(ctx, w, madeTheBoard, tick) {
   dim(ctx);
-  const last = w.lastLevel;
+  const last = w.lastLevel, b0 = w.bonus;
   drawLogo(ctx, last ? 'YOU WIN!' : 'LEVEL COMPLETE', VIEW_W / 2, last ? 34 : 40, last ? 3 : 2);
-  drawText(ctx, last ? 'BIG FRANK IS OUT COLD.' : 'NEXT STOP: THE SALOON.', VIEW_W / 2, 64, { align: 'center', color: PAL.f });
+  drawText(ctx, last ? 'BIG FRANK IS OUT COLD.' : 'NEXT STOP: THE SALOON.', VIEW_W / 2, w.mode === 'speedrun' ? 60 : 64, { align: 'center', color: PAL.f });
+  if (w.mode === 'speedrun') drawText(ctx, `RUN TIME ${formatTime(b0.runFrames)}`, VIEW_W / 2, 71, { align: 'center', color: PAL.y });
   const b = w.bonus;
   const mm = Math.floor(b.seconds / 60), ss = String(b.seconds % 60).padStart(2, '0');
   const lines = [
@@ -849,15 +858,16 @@ export function drawScores(ctx, tick, list, highlight, shared) {
   dim(ctx);
   drawLogo(ctx, 'HI SCORES', VIEW_W / 2, 10, 3);
   panel(ctx, 50, 42, 156, 142);
-  drawText(ctx, 'RANK  NAME   SCORE', 62, 49, { color: PAL.g });
+  drawText(ctx, 'RANK NAME  SCORE  MODE', 60, 49, { color: PAL.g });
   for (let i = 0; i < MAX_SCORES; i++) {
     const e = list[i];
     const y = 62 + i * 12;
     const hot = i === highlight;
     const color = hot ? ((tick >> 2) & 1 ? PAL.w : PAL.y) : i === 0 ? PAL.y : e ? PAL.w : PAL.d;
     const rank = `${i + 1}`.padStart(2, ' ');
-    drawText(ctx, `${rank}.   ${e ? e.name.padEnd(3, ' ') : '---'}   ${e ? pad6(e.score) : '------'}`, 62, y, { color });
-    if (hot) drawText(ctx, '<', 190, y, { color: PAL.y });
+    const mode = e ? MODES[e.mode].short : '';
+    drawText(ctx, `${rank}.  ${e ? e.name.padEnd(3, ' ') : '---'}  ${e ? pad6(e.score) : '------'} ${mode}`, 60, y, { color });
+    if (hot && (tick >> 2) & 1) drawText(ctx, '>', 53, y, { color: PAL.y });
   }
   drawText(ctx, shared ? 'SHARED WITH EVERYONE ON THIS SERVER' : 'SAVED ON THIS DEVICE ONLY', VIEW_W / 2, 196, { align: 'center', color: shared ? PAL.f : PAL.l });
   if ((tick >> 4) & 1) drawText(ctx, 'PRESS ENTER', VIEW_W / 2, 214, { align: 'center' });

@@ -18,6 +18,8 @@ import {
   normalizeScores, addScore, qualifies, cleanName, cleanScore, createScoreStore, MAX_SCORES, NAME_CHARS,
 } from '../src/hiscores.js';
 import { TUNE } from '../src/audio.js';
+import { MODES, MODE_IDS, cleanMode, carryForward, retryPlan, formatTime } from '../src/modes.js';
+import { runFrames } from '../src/game.js';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -684,6 +686,50 @@ test('menus and the controls screen respond to the mouse', () => {
   assert.ok(CTL.slotX[SLOTS - 1] + CTL.slotW <= 256, 'slots fit on screen');
 });
 
+// ---- game modes ---------------------------------------------------------------------
+test('normal mode retries the level you died on; speed run starts over at level 1', () => {
+  assert.deepEqual(MODE_IDS, ['normal', 'speedrun']);
+  assert.deepEqual(TITLE_MENU.items.slice(0, 2), MODE_IDS.map((id) => MODES[id].label), 'title menu offers both modes, in order');
+  assert.equal(cleanMode('speedrun'), 'speedrun');
+  for (const junk of ['normal', 'SPEEDRUN', '', null, undefined, 7]) assert.equal(cleanMode(junk), 'normal');
+
+  // Finish level 1 with a score, one heart and two farts, 50 seconds on the clock.
+  const w1 = createWorld({ mode: 'normal' });
+  w1.score = 6200; w1.player.hp = 1; w1.player.farts = 2; w1.time = 3000;
+  const carry = carryForward(w1, runFrames(w1));
+  assert.deepEqual(carry, { score: 6200, hp: 1, farts: 2, runTime: 3000 });
+  const entry = { levelIndex: 1, carry };
+
+  // Normal: die in level 2 -> still level 2, score as on arrival, hearts refilled.
+  assert.deepEqual(retryPlan('normal', entry), { levelIndex: 1, carry: { score: 6200, hp: MAX_HP, farts: 2, runTime: 3000 } });
+  assert.equal(retryPlan('normal', { levelIndex: 1, carry: { ...carry, farts: 0 } }).carry.farts, 1, 'never retried with an empty tank');
+  // Normal: die in level 1 -> level 1 from scratch.
+  assert.deepEqual(retryPlan('normal', { levelIndex: 0, carry: null }), { levelIndex: 0, carry: null });
+  // Speed run: die anywhere -> level 1 from scratch.
+  assert.deepEqual(retryPlan('speedrun', entry), { levelIndex: 0, carry: null });
+  assert.deepEqual(retryPlan('speedrun', { levelIndex: 0, carry: null }), { levelIndex: 0, carry: null });
+
+  // The plan actually builds the right world.
+  const plan = retryPlan('normal', entry);
+  const again = createWorld({ levelIndex: plan.levelIndex, carry: plan.carry, mode: 'normal' });
+  assert.deepEqual([again.levelIndex, again.theme, again.score, again.player.hp, again.mode], [1, 'saloon', 6200, MAX_HP, 'normal']);
+  const over = retryPlan('speedrun', entry);
+  const fresh = createWorld({ levelIndex: over.levelIndex, carry: over.carry, mode: 'speedrun' });
+  assert.deepEqual([fresh.levelIndex, fresh.theme, fresh.score, fresh.mode, runFrames(fresh)], [0, 'desert', 0, 'speedrun', 0]);
+});
+
+test('the speed-run clock runs across levels and stops for dialog', () => {
+  const w = createWorld({ levelIndex: 1, mode: 'speedrun', carry: { score: 0, hp: 3, farts: 1, runTime: 3000 } });
+  assert.equal(runFrames(w), 3000);
+  run(w, 120);
+  assert.equal(runFrames(w), 3120);
+  assert.equal(formatTime(0), '0:00.0');
+  assert.equal(formatTime(3120), '0:52.0');
+  assert.equal(formatTime(60 * 75 + 30), '1:15.5');
+  for (const ch of formatTime(123456)) assert.ok(ch in FONT, `clock uses a glyph the font lacks: '${ch}'`);
+  assert.equal(createWorld({ mode: 'bogus' }).mode, 'normal');
+});
+
 // ---- hi scores ---------------------------------------------------------------------
 test('hi-score rules: names, ordering, top ten', () => {
   assert.equal(cleanName('zp!'), 'ZP');
@@ -707,7 +753,7 @@ test('hi-score rules: names, ordering, top ten', () => {
   assert.equal(tie.list[0].name, 'P12');
   assert.equal(addScore(list, 'TOP', 5000).rank, 0);
   assert.deepEqual(normalizeScores('junk'), []);
-  assert.deepEqual(normalizeScores([{ name: 'ok', score: 5 }, { name: '', score: 5 }, { name: 'X', score: -2 }, null]), [{ name: 'OK', score: 5, at: 0 }]);
+  assert.deepEqual(normalizeScores([{ name: 'ok', score: 5 }, { name: '', score: 5 }, { name: 'X', score: -2 }, null]), [{ name: 'OK', score: 5, at: 0, mode: 'normal' }]);
 });
 
 function memoryStorage() {
@@ -777,6 +823,11 @@ test('server keeps one shared board across players and restarts', async () => {
     assert.deepEqual(await bob.submit('bob', 5000), { rank: 0, shared: true });
     await alice.refresh();
     assert.deepEqual(alice.list().map((e) => [e.name, e.score]), [['BOB', 5000], ['ALI', 3000]]);
+    // The mode a score was earned in is stored and shared too.
+    await bob.submit('zip', 4000, 'speedrun');
+    await alice.refresh();
+    assert.deepEqual(alice.list().map((e) => [e.name, e.mode]), [['BOB', 'normal'], ['ZIP', 'speedrun'], ['ALI', 'normal']]);
+    assert.equal((await (await post({ name: 'odd', score: 1, mode: 'cheat' })).json()).scores.find((e) => e.name === 'ODD').mode, 'normal');
 
     // Bad input is rejected and changes nothing.
     assert.equal((await post({ name: '***', score: 10 })).status, 400);

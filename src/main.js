@@ -1,6 +1,7 @@
 // Boot, fixed-timestep loop and the screen state machine.
 
-import { createWorld, updateWorld, hurtPlayer, VIEW_W, VIEW_H, NO_INPUT } from './game.js';
+import { createWorld, updateWorld, hurtPlayer, runFrames, VIEW_W, VIEW_H, NO_INPUT } from './game.js';
+import { MODE_IDS, cleanMode, carryForward, retryPlan } from './modes.js';
 import { TILE } from './level.js';
 import {
   initRender, drawWorld, drawHUD, drawTitle, drawPause, drawControls, drawGameOver, drawWin,
@@ -48,15 +49,19 @@ const pauseMenu = { sel: 0 };
 const ctl = { row: 0, col: 0, listening: false, from: 'title' }; // controls screen cursor
 const entry = { chars: ['A', 'A', 'A'], pos: 0, busy: false }; // initials being entered
 const board = { highlight: -1 }; // hi-score screen: row to flash
+// The current run: its mode, and how the current level was entered (so a
+// game over can restart from the right place: see retryPlan).
+let run = { mode: 'normal', levelIndex: 0, carry: null };
 
 function go(next) {
   screen = next;
   screenT = 0;
 }
 
-// carry: { score, hp, farts } brought over from the level before.
-function startGame(levelIndex = 0, carry = null) {
-  world = createWorld({ levelIndex, carry });
+// carry: { score, hp, farts, runTime } brought over from the level before.
+function startGame(mode, levelIndex = 0, carry = null) {
+  run = { mode: cleanMode(mode), levelIndex, carry };
+  world = createWorld({ levelIndex, carry, mode: run.mode });
   go('play');
   input.releaseAll();
   audio.play('start');
@@ -176,7 +181,7 @@ function stepInitials(inp) {
   if (save) {
     entry.busy = true;
     audio.play('checkpoint');
-    scores.submit(entry.chars.join(''), world.score).then(({ rank }) => {
+    scores.submit(entry.chars.join(''), world.score, run.mode).then(({ rank }) => {
       entry.busy = false;
       openScores(rank);
     });
@@ -194,9 +199,9 @@ function step() {
   switch (screen) {
     case 'title': {
       const pick = navMenu(TITLE_MENU, titleMenu, inp.ui);
-      if (pick === 0) startGame();
-      else if (pick === 1) openScores();
-      else if (pick === 2) openControls('title');
+      if (pick === 0 || pick === 1) startGame(MODE_IDS[pick]);
+      else if (pick === 2) openScores();
+      else if (pick === 3) openControls('title');
       break;
     }
     case 'scores':
@@ -223,18 +228,25 @@ function step() {
       break;
     }
     case 'gameover':
-    case 'won':
       updateWorld(world, NO_INPUT); // let particles settle
       world.events.length = 0;
+      if (screenT > 45 && inp.ui.back) go('title');
+      else if (screenT > 45 && (inp.ui.confirm || inp.ui.click)) {
+        // Normal: retry the level Rudy died on. Speed run: back to level 1.
+        const plan = retryPlan(run.mode, run);
+        startGame(run.mode, plan.levelIndex, plan.carry);
+      }
+      break;
+    case 'won':
+      updateWorld(world, NO_INPUT);
+      world.events.length = 0;
       if (screenT > 45 && (inp.ui.confirm || inp.ui.click || inp.pausePressed)) {
-        // Reaching the saloon with a good enough score earns a spot on the board.
-        if (screen === 'won' && !world.lastLevel) { // on to the next level, keeping score, hearts and beans
-          startGame(world.levelIndex + 1, { score: world.score, hp: world.player.hp, farts: world.player.farts });
-        } else if (screen === 'won' && scores.qualifies(world.score)) {
+        if (!world.lastLevel) { // on to the next level, keeping score, hearts, beans and the run clock
+          startGame(run.mode, world.levelIndex + 1, carryForward(world, runFrames(world)));
+        } else if (scores.qualifies(world.score)) { // finishing the game can earn a spot on the board
           Object.assign(entry, { pos: 0, busy: false });
           go('initials');
-        } else if (screen === 'won') openScores();
-        else go('title');
+        } else openScores();
       }
       break;
   }
@@ -281,7 +293,8 @@ function makeDebug() {
     Object.assign(entry, { chars: ['R', 'U', 'D'], pos: 1 });
     screen = 'initials';
   } else if (mode !== 'title') {
-    world = createWorld({ levelIndex: (Number(q.get('level')) || 1) - 1 }); // &level=2 starts in the saloon
+    run = { mode: cleanMode(q.get('mode')), levelIndex: (Number(q.get('level')) || 1) - 1, carry: null }; // &level=2&mode=speedrun
+    world = createWorld({ levelIndex: run.levelIndex, mode: run.mode });
     screen = 'play';
     const col = Number(q.get('col'));
     if (col) {

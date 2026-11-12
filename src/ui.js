@@ -6,7 +6,7 @@ import { ACTIONS, SLOTS } from './input.js';
 const CENTER_X = 128;
 const textW = (s) => s.length * 6 - 1;
 
-export const TITLE_MENU = { y: 96, step: 11, items: ['START GAME', 'HI SCORES', 'CONTROLS'] };
+export const TITLE_MENU = { y: 94, step: 11, items: ['NORMAL GAME', 'SPEED RUN', 'HI SCORES', 'CONTROLS'] };
 export const PAUSE_MENU = { y: 108, step: 14, items: ['RESUME', 'CONTROLS', 'QUIT TO TITLE'] };
 
 function overCentered(label, y, mx, my) {

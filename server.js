@@ -49,9 +49,9 @@ async function saveScores() {
   await fs.rename(tmp, SCORES_FILE); // atomic: readers never see a half-written file
 }
 
-function submitScore(name, score) {
+function submitScore(name, score, mode) {
   const job = queue.then(async () => {
-    const result = addScore(scores, name, score);
+    const result = addScore(scores, name, score, Date.now(), mode);
     if (result.rank >= 0) {
       scores = result.list;
       await saveScores();
@@ -95,7 +95,7 @@ async function handleScores(req, res) {
   const name = cleanName(data && data.name), score = cleanScore(data && data.score);
   if (!name || score === null) return sendJson(res, 400, { error: 'need name (1-3 letters or digits) and an integer score' });
   try {
-    const rank = await submitScore(name, score);
+    const rank = await submitScore(name, score, data.mode);
     return sendJson(res, 200, { scores, rank });
   } catch (err) {
     console.error('Could not save scores:', err.message);
